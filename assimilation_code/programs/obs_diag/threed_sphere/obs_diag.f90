@@ -244,11 +244,11 @@ namelist /obs_diag_nml/ obs_sequence_name, obs_sequence_list,                 &
 
 !>@todo must be a more clever way to relate the copy_names to the components
 
-integer, parameter :: Ncopies = 23
+integer, parameter :: Ncopies = 24
 character(len=stringlength), dimension(Ncopies) :: copy_names =                  &
    (/ 'Nposs      ', 'Nused      ', 'NbigQC     ', 'NbadIZ     ', 'NbadUV     ', &
       'NbadLV     ', 'rmse       ', 'bias       ', 'spread     ', 'totalspread', &
-      'NbadDARTQC ', 'observation', 'ens_mean   ', 'N_trusted  ',                &
+      'obinfluence', 'NbadDARTQC ', 'observation', 'ens_mean   ', 'N_trusted  ', &
       'N_DARTqc_0 ', 'N_DARTqc_1 ', 'N_DARTqc_2 ', 'N_DARTqc_3 ', 'N_DARTqc_4 ', &
       'N_DARTqc_5 ', 'N_DARTqc_6 ', 'N_DARTqc_7 ', 'N_DARTqc_8 '                /)
 
@@ -265,7 +265,7 @@ type TLRV_type
    integer,  dimension(:,:,:,:), pointer :: NbadIZ ! # bad (ie huge) Innovation Zscore
    integer,  dimension(:,:,:,:), pointer :: NbadUV ! # unmatched U/V wind pairs
    integer,  dimension(:,:,:,:), pointer :: NbadLV ! # obs above/below top/bottom
-   real(r8), dimension(:,:,:,:), pointer :: rmse, bias, spread, totspread
+   real(r8), dimension(:,:,:,:), pointer :: rmse, bias, spread, totspread, obinfluence
    integer,  dimension(:,:,:,:), pointer :: NbadDartQC ! # bad DART QC values
    real(r8), dimension(:,:,:,:), pointer :: observation, ens_mean
    integer,  dimension(:,:,:,:), pointer :: NDartQC_0, NDartQC_1, NDartQC_2, NDartQC_3
@@ -286,7 +286,7 @@ type LRV_type
    integer,  dimension(:,:,:), pointer :: NbadIZ ! # bad (ie huge) Innovation Zscore
    integer,  dimension(:,:,:), pointer :: NbadUV ! # unmatched U/V wind pairs
    integer,  dimension(:,:,:), pointer :: NbadLV ! # obs above/below top/bottom
-   real(r8), dimension(:,:,:), pointer :: rmse, bias, spread, totspread
+   real(r8), dimension(:,:,:), pointer :: rmse, bias, spread, totspread, obinfluence
    integer,  dimension(:,:,:), pointer :: NbadDartQC ! # bad DART QC values
    real(r8), dimension(:,:,:), pointer :: observation, ens_mean
    integer,  dimension(:,:,:), pointer :: NDartQC_0, NDartQC_1, NDartQC_2, NDartQC_3
@@ -1912,6 +1912,7 @@ allocate(thisvar%rmse(       ntimes, nlevs, nareas, ntypes), &
          thisvar%bias(       ntimes, nlevs, nareas, ntypes), &
          thisvar%spread(     ntimes, nlevs, nareas, ntypes), &
          thisvar%totspread(  ntimes, nlevs, nareas, ntypes), &
+         thisvar%obinfluence(ntimes, nlevs, nareas, ntypes), &
          thisvar%observation(ntimes, nlevs, nareas, ntypes), &
          thisvar%ens_mean(   ntimes, nlevs, nareas, ntypes), &
          thisvar%Nposs(      ntimes, nlevs, nareas, ntypes), &
@@ -1949,6 +1950,7 @@ thisvar%rmse        = 0.0_r8
 thisvar%bias        = 0.0_r8
 thisvar%spread      = 0.0_r8
 thisvar%totspread   = 0.0_r8
+thisvar%obinfluence = 0.0_r8
 thisvar%observation = 0.0_r8
 thisvar%ens_mean    = 0.0_r8
 thisvar%Nposs       = 0
@@ -1990,6 +1992,7 @@ allocate(thisvar%rmse(       nlevs, nareas, ntypes), &
          thisvar%bias(       nlevs, nareas, ntypes), &
          thisvar%spread(     nlevs, nareas, ntypes), &
          thisvar%totspread(  nlevs, nareas, ntypes), &
+         thisvar%obinfluence(nlevs, nareas, ntypes), &
          thisvar%observation(nlevs, nareas, ntypes), &
          thisvar%ens_mean(   nlevs, nareas, ntypes), &
          thisvar%Nposs(      nlevs, nareas, ntypes), &
@@ -2026,6 +2029,7 @@ thisvar%rmse        = 0.0_r8
 thisvar%bias        = 0.0_r8
 thisvar%spread      = 0.0_r8
 thisvar%totspread   = 0.0_r8
+thisvar%obinfluence = 0.0_r8
 thisvar%observation = 0.0_r8
 thisvar%ens_mean    = 0.0_r8
 thisvar%Nposs       = 0
@@ -3298,6 +3302,7 @@ do iepoch = 1,Nepochs
          prior%rmse(       iepoch, ilev, iregion, ivar) = MISSING_R4
          prior%spread(     iepoch, ilev, iregion, ivar) = MISSING_R4
          prior%totspread(  iepoch, ilev, iregion, ivar) = MISSING_R4
+         prior%obinfluence(iepoch, ilev, iregion, ivar) = MISSING_R4
    else
          prior%observation(iepoch, ilev, iregion, ivar) = &
          prior%observation(iepoch, ilev, iregion, ivar) / &
@@ -3325,6 +3330,10 @@ do iepoch = 1,Nepochs
     sqrt(prior%totspread(  iepoch, ilev, iregion, ivar) / &
          prior%Nused(      iepoch, ilev, iregion, ivar) )
 
+    ! now, calculate the observation influence (KH^T)
+         prior%obinfluence(iepoch, ilev, iregion, ivar) = &
+         prior%spread(iepoch, ilev, iregion, ivar) ** 2 / &  
+         prior%totspread(iepoch, ilev, iregion, ivar) ** 2
    endif
 
    ! Same thing for the posteriors
@@ -3336,6 +3345,7 @@ do iepoch = 1,Nepochs
          poste%rmse(       iepoch, ilev, iregion, ivar) = MISSING_R4
          poste%spread(     iepoch, ilev, iregion, ivar) = MISSING_R4
          poste%totspread(  iepoch, ilev, iregion, ivar) = MISSING_R4
+         poste%obinfluence(iepoch, ilev, iregion, ivar) = MISSING_R4
    else
          poste%observation(iepoch, ilev, iregion, ivar) = &
          poste%observation(iepoch, ilev, iregion, ivar) / &
@@ -3362,6 +3372,11 @@ do iepoch = 1,Nepochs
          poste%totspread(  iepoch, ilev, iregion, ivar) = &
     sqrt(poste%totspread(  iepoch, ilev, iregion, ivar) / &
          poste%Nused(      iepoch, ilev, iregion, ivar) )
+
+    ! set the observation inflauence the same as the prior (not defined for posteriors)
+         poste%obinfluence(iepoch, ilev, iregion, ivar) = &
+         prior%spread(iepoch, ilev, iregion, ivar) ** 2 / &  
+         prior%totspread(iepoch, ilev, iregion, ivar) ** 2 
 
    endif
 enddo
@@ -3407,6 +3422,7 @@ do ilev=1, Nlevels
            priorAVG%rmse(       ilev, iregion, ivar) = MISSING_R4
            priorAVG%spread(     ilev, iregion, ivar) = MISSING_R4
            priorAVG%totspread(  ilev, iregion, ivar) = MISSING_R4
+           priorAVG%obinfluence(ilev, iregion, ivar) = MISSING_R4
 
    else
            priorAVG%observation(ilev, iregion, ivar) = &
@@ -3434,6 +3450,10 @@ do ilev=1, Nlevels
       sqrt(priorAVG%totspread(  ilev, iregion, ivar) / &
            priorAVG%Nused(      ilev, iregion, ivar) )
 
+           priorAVG%obinfluence(ilev, iregion, ivar) = &
+           priorAVG%spread(ilev, iregion, ivar) ** 2 / &
+           priorAVG%totspread(ilev, iregion, ivar) ** 2
+
    endif
 
    ! Same thing for the posteriors
@@ -3445,6 +3465,7 @@ do ilev=1, Nlevels
            posteAVG%rmse(       ilev, iregion, ivar) = MISSING_R4
            posteAVG%spread(     ilev, iregion, ivar) = MISSING_R4
            posteAVG%totspread(  ilev, iregion, ivar) = MISSING_R4
+           posteAVG%obinfluence(ilev, iregion, ivar) = MISSING_R4
 
    else
            posteAVG%observation(ilev, iregion, ivar) = &
@@ -3471,6 +3492,10 @@ do ilev=1, Nlevels
            posteAVG%totspread(  ilev, iregion, ivar) = &
       sqrt(posteAVG%totspread(  ilev, iregion, ivar) / &
            posteAVG%Nused(      ilev, iregion, ivar) )
+
+           posteAVG%obinfluence(ilev, iregion, ivar) = &
+           priorAVG%spread(ilev, iregion, ivar) ** 2 / &
+           priorAVG%totspread(ilev, iregion, ivar) ** 2
 
    endif
 enddo
@@ -4051,7 +4076,7 @@ if (allocated(ens_copy_index))  deallocate(ens_copy_index)
 deallocate(prior%rmse,        prior%bias,      prior%spread,    prior%totspread, &
            prior%observation, prior%ens_mean,  prior%Nposs,     prior%Nused,     &
            prior%NbigQC,      prior%NbadIZ,    prior%NbadUV,    prior%NbadLV,    &
-           prior%NbadDartQC,  prior%Ntrusted)
+           prior%NbadDartQC,  prior%Ntrusted,  prior%obinfluence)
 
 deallocate(prior%NDartQC_0,   prior%NDartQC_1, prior%NDartQC_2, prior%NDartQC_3, &
            prior%NDartQC_4,   prior%NDartQC_5, prior%NDartQC_6, prior%NDartQC_7, &
@@ -4060,7 +4085,7 @@ deallocate(prior%NDartQC_0,   prior%NDartQC_1, prior%NDartQC_2, prior%NDartQC_3,
 deallocate(poste%rmse,        poste%bias,      poste%spread,    poste%totspread, &
            poste%observation, poste%ens_mean,  poste%Nposs,     poste%Nused,     &
            poste%NbigQC,      poste%NbadIZ,    poste%NbadUV,    poste%NbadLV,    &
-           poste%NbadDartQC,  poste%Ntrusted)
+           poste%NbadDartQC,  poste%Ntrusted,  poste%obinfluence)
 
 deallocate(poste%NDartQC_0,   poste%NDartQC_1, poste%NDartQC_2, poste%NDartQC_3, &
            poste%NDartQC_4,   poste%NDartQC_5, poste%NDartQC_6, poste%NDartQC_7, &
@@ -4070,7 +4095,7 @@ deallocate(priorAVG%rmse,       priorAVG%bias,        priorAVG%spread,   &
            priorAVG%totspread,  priorAVG%observation, priorAVG%ens_mean, &
            priorAVG%Nposs,      priorAVG%Nused,       priorAVG%NbigQC,   &
            priorAVG%NbadIZ,     priorAVG%NbadUV,      priorAVG%NbadLV,   &
-           priorAVG%NbadDartQC, priorAVG%Ntrusted)
+           priorAVG%NbadDartQC, priorAVG%Ntrusted,    priorAVG%obinfluence)
 
 deallocate(priorAVG%NDartQC_0,  priorAVG%NDartQC_1,   priorAVG%NDartQC_2, &
            priorAVG%NDartQC_3,  priorAVG%NDartQC_4,   priorAVG%NDartQC_5, &
@@ -4080,7 +4105,7 @@ deallocate(posteAVG%rmse,       posteAVG%bias,        posteAVG%spread,    &
            posteAVG%totspread,  posteAVG%observation, posteAVG%ens_mean,  &
            posteAVG%Nposs,      posteAVG%Nused,       posteAVG%NbigQC,    &
            posteAVG%NbadIZ,     posteAVG%NbadUV,      posteAVG%NbadLV,    &
-           posteAVG%NbadDartQC, posteAVG%Ntrusted)
+           posteAVG%NbadDartQC, posteAVG%Ntrusted,    posteAVG%obinfluence)
 
 deallocate(posteAVG%NDartQC_0,  posteAVG%NDartQC_1,   posteAVG%NDartQC_2, &
            posteAVG%NDartQC_3,  posteAVG%NDartQC_4,   posteAVG%NDartQC_5, &
@@ -4431,19 +4456,20 @@ FILL : do ivar = 1,num_obs_types
       rchunk(iregion,ilevel, 8,itime) = vrbl%bias(       itime,ilevel,iregion,ivar)
       rchunk(iregion,ilevel, 9,itime) = vrbl%spread(     itime,ilevel,iregion,ivar)
       rchunk(iregion,ilevel,10,itime) = vrbl%totspread(  itime,ilevel,iregion,ivar)
-      rchunk(iregion,ilevel,11,itime) = vrbl%NbadDartQC( itime,ilevel,iregion,ivar)
-      rchunk(iregion,ilevel,12,itime) = vrbl%observation(itime,ilevel,iregion,ivar)
-      rchunk(iregion,ilevel,13,itime) = vrbl%ens_mean(   itime,ilevel,iregion,ivar)
-      rchunk(iregion,ilevel,14,itime) = vrbl%Ntrusted(   itime,ilevel,iregion,ivar)
-      rchunk(iregion,ilevel,15,itime) = vrbl%NDartQC_0(  itime,ilevel,iregion,ivar)
-      rchunk(iregion,ilevel,16,itime) = vrbl%NDartQC_1(  itime,ilevel,iregion,ivar)
-      rchunk(iregion,ilevel,17,itime) = vrbl%NDartQC_2(  itime,ilevel,iregion,ivar)
-      rchunk(iregion,ilevel,18,itime) = vrbl%NDartQC_3(  itime,ilevel,iregion,ivar)
-      rchunk(iregion,ilevel,19,itime) = vrbl%NDartQC_4(  itime,ilevel,iregion,ivar)
-      rchunk(iregion,ilevel,20,itime) = vrbl%NDartQC_5(  itime,ilevel,iregion,ivar)
-      rchunk(iregion,ilevel,21,itime) = vrbl%NDartQC_6(  itime,ilevel,iregion,ivar)
-      rchunk(iregion,ilevel,22,itime) = vrbl%NDartQC_7(  itime,ilevel,iregion,ivar)
-      rchunk(iregion,ilevel,23,itime) = vrbl%NDartQC_8(  itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,11,itime) = vrbl%obinfluence(itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,12,itime) = vrbl%NbadDartQC( itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,13,itime) = vrbl%observation(itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,14,itime) = vrbl%ens_mean(   itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,15,itime) = vrbl%Ntrusted(   itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,16,itime) = vrbl%NDartQC_0(  itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,17,itime) = vrbl%NDartQC_1(  itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,18,itime) = vrbl%NDartQC_2(  itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,19,itime) = vrbl%NDartQC_3(  itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,20,itime) = vrbl%NDartQC_4(  itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,21,itime) = vrbl%NDartQC_5(  itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,22,itime) = vrbl%NDartQC_6(  itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,23,itime) = vrbl%NDartQC_7(  itime,ilevel,iregion,ivar)
+      rchunk(iregion,ilevel,24,itime) = vrbl%NDartQC_8(  itime,ilevel,iregion,ivar)
 
    enddo
    enddo
@@ -4582,19 +4608,20 @@ FILL : do ivar = 1,num_obs_types
       chunk(iregion,ilevel, 8) = vrbl%bias(       ilevel,iregion,ivar)
       chunk(iregion,ilevel, 9) = vrbl%spread(     ilevel,iregion,ivar)
       chunk(iregion,ilevel,10) = vrbl%totspread(  ilevel,iregion,ivar)
-      chunk(iregion,ilevel,11) = vrbl%NbadDartQC( ilevel,iregion,ivar)
-      chunk(iregion,ilevel,12) = vrbl%observation(ilevel,iregion,ivar)
-      chunk(iregion,ilevel,13) = vrbl%ens_mean(   ilevel,iregion,ivar)
-      chunk(iregion,ilevel,14) = vrbl%Ntrusted(   ilevel,iregion,ivar)
-      chunk(iregion,ilevel,15) = vrbl%NDartQC_0(  ilevel,iregion,ivar)
-      chunk(iregion,ilevel,16) = vrbl%NDartQC_1(  ilevel,iregion,ivar)
-      chunk(iregion,ilevel,17) = vrbl%NDartQC_2(  ilevel,iregion,ivar)
-      chunk(iregion,ilevel,18) = vrbl%NDartQC_3(  ilevel,iregion,ivar)
-      chunk(iregion,ilevel,19) = vrbl%NDartQC_4(  ilevel,iregion,ivar)
-      chunk(iregion,ilevel,20) = vrbl%NDartQC_5(  ilevel,iregion,ivar)
-      chunk(iregion,ilevel,21) = vrbl%NDartQC_6(  ilevel,iregion,ivar)
-      chunk(iregion,ilevel,22) = vrbl%NDartQC_7(  ilevel,iregion,ivar)
-      chunk(iregion,ilevel,23) = vrbl%NDartQC_8(  ilevel,iregion,ivar)
+      chunk(iregion,ilevel,11) = vrbl%obinfluence(ilevel,iregion,ivar)
+      chunk(iregion,ilevel,12) = vrbl%NbadDartQC( ilevel,iregion,ivar)
+      chunk(iregion,ilevel,13) = vrbl%observation(ilevel,iregion,ivar)
+      chunk(iregion,ilevel,14) = vrbl%ens_mean(   ilevel,iregion,ivar)
+      chunk(iregion,ilevel,15) = vrbl%Ntrusted(   ilevel,iregion,ivar)
+      chunk(iregion,ilevel,16) = vrbl%NDartQC_0(  ilevel,iregion,ivar)
+      chunk(iregion,ilevel,17) = vrbl%NDartQC_1(  ilevel,iregion,ivar)
+      chunk(iregion,ilevel,18) = vrbl%NDartQC_2(  ilevel,iregion,ivar)
+      chunk(iregion,ilevel,19) = vrbl%NDartQC_3(  ilevel,iregion,ivar)
+      chunk(iregion,ilevel,20) = vrbl%NDartQC_4(  ilevel,iregion,ivar)
+      chunk(iregion,ilevel,21) = vrbl%NDartQC_5(  ilevel,iregion,ivar)
+      chunk(iregion,ilevel,22) = vrbl%NDartQC_6(  ilevel,iregion,ivar)
+      chunk(iregion,ilevel,23) = vrbl%NDartQC_7(  ilevel,iregion,ivar)
+      chunk(iregion,ilevel,24) = vrbl%NDartQC_8(  ilevel,iregion,ivar)
 
    enddo
    enddo
