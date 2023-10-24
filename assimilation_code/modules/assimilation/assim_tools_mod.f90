@@ -134,6 +134,8 @@ logical  :: sampling_error_correction       = .false.
 integer  :: adaptive_localization_threshold = -1
 real(r8) :: adaptive_cutoff_floor           = 0.0_r8
 integer  :: print_every_nth_obs             = 0
+real(r8) :: rd_factor                       = 0.2_r8
+logical  :: rd_every_ob                     = .true.
 
 ! since this is in the namelist, it has to have a fixed size.
 integer, parameter   :: MAX_ITEMS = 300
@@ -185,8 +187,8 @@ logical  :: only_area_adapt  = .true.
 ! compared to previous versions of this namelist item.
 logical  :: distribute_mean  = .false.
 
-namelist / assim_tools_nml / filter_kind, cutoff, sort_obs_inc, &
-   spread_restoration, sampling_error_correction,                          &
+namelist / assim_tools_nml / filter_kind, cutoff, rd_factor, rd_every_ob,  &
+   sort_obs_inc, spread_restoration, sampling_error_correction,            &
    adaptive_localization_threshold, adaptive_cutoff_floor,                 &
    print_every_nth_obs, rectangular_quadrature, gaussian_likelihood_tails, &
    output_localization_diagnostics, localization_diagnostics_file,         &
@@ -332,6 +334,10 @@ real(r8) :: obs_prior_mean(num_groups), obs_prior_var(num_groups)
 real(r8) :: vertvalue_obs_in_localization_coord, whichvert_real
 real(r8), allocatable :: close_obs_dist(:)
 real(r8), allocatable :: close_state_dist(:)
+
+real(r8)             :: rd_alpha
+integer              :: Ne_a, Ne_d
+integer, allocatable :: active_mem(:)
 
 integer(i8) :: state_index
 integer(i8), allocatable :: my_state_indx(:)
@@ -544,6 +550,14 @@ endif
 
 allow_missing_in_state = get_missing_ok_status()
 
+! randomized dormant configuration
+rd_alpha = rd_factor
+Ne_d     = nint(rd_alpha * ens_size)
+Ne_a     = ens_size - Ne_d
+
+allocate(active_mem(Ne_a))
+active_mem = randperm_ens(ens_size, Ne_a) 
+
 ! Loop through all the (global) observations sequentially
 SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    ! Some compilers do not like mod by 0, so test first.
@@ -578,6 +592,13 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
 
    ! Find out who has this observation and where it is
    call get_var_owner_index(ens_handle, int(i,i8), owner, owners_index)
+
+   ! Randomize active ensemble subset
+   if (rd_every_ob .and. i > 1) active_mem = randperm_ens(ens_size, Ne_a)
+
+   write(*, '(I5)') 'obs: ', i
+   write(*, '(/A, I2)') 'Ne_a: ', Ne_a
+   write(*, '(A, 20I3/)') 'active members: ', active_mem  
 
    ! Following block is done only by the owner of this observation
    !-----------------------------------------------------------------------
@@ -643,6 +664,15 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
          obs_err_var, obs_inc(grp_bot:grp_top), inflate, my_inflate,   &
          my_inflate_sd, net_a(group))
 
+      write(*, '(A, 20F9.4)') 'obs_inc: ', obs_inc
+      write(*, '(A, F8.5/)') 'net_a: ', net_a
+
+      ! Update obs_inc based on the active members
+      call obinc_active(obs_prior, active_mem, Ne_a, obs(1), obs_err_var, ens_size, obs_inc, net_a(1))
+
+      write(*, '(A, 20F9.4)') 'obs_inc: ', obs_inc
+      write(*, '(A, F8.5/)') 'net_a: ', net_a
+
       ! Also compute prior mean and variance of obs for efficiency here
       obs_prior_mean(group) = sum(obs_prior(grp_bot:grp_top)) / grp_size
       obs_prior_var(group) = sum((obs_prior(grp_bot:grp_top) - obs_prior_mean(group))**2) / &
@@ -707,7 +737,7 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
       call obs_updates_ens(ens_size, num_groups, ens_handle%copies(1:ens_size, state_index), &
          my_state_loc(state_index), my_state_kind(state_index), obs_prior, obs_inc, &
          obs_prior_mean, obs_prior_var, base_obs_loc, base_obs_type, obs_time, &
-         net_a, grp_size, grp_beg, grp_end, i, &
+         net_a, grp_size, grp_beg, grp_end, i, active_mem, Ne_a, &
          my_state_indx(state_index), final_factor, correl, local_varying_ss_inflate, inflate_only)
 
       ! Compute spatially-varying state space inflation
@@ -743,11 +773,12 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
             call obs_updates_ens(ens_size, num_groups, obs_ens_handle%copies(1:ens_size, obs_index), &
                my_obs_loc(obs_index), my_obs_kind(obs_index), obs_prior, obs_inc, &
                obs_prior_mean, obs_prior_var, base_obs_loc, base_obs_type, obs_time, &
-               net_a, grp_size, grp_beg, grp_end, i, &
+               net_a, grp_size, grp_beg, grp_end, i, active_mem, Ne_a, &
                -1*my_obs_indx(obs_index), final_factor, correl, .false., inflate_only)
          endif
       end do OBS_UPDATE
    endif
+   pause
 end do SEQUENTIAL_OBS
 
 ! Every pe needs to get the current my_inflate and my_inflate_sd back
@@ -943,6 +974,50 @@ if(do_obs_inflate(inflate)) net_a = net_a * sqrt(my_cov_inflate)
 
 end subroutine obs_increment
 
+
+!-------------------------------------------------------------
+subroutine obinc_active(ens, subset, sub_size, obs, obs_var, ens_size, obs_inc, net_a)
+
+integer,  intent(in)    :: ens_size, sub_size
+real(r8), intent(in)    :: obs, obs_var
+integer,  intent(in)    :: subset(sub_size)
+real(r8), intent(in)    :: ens(ens_size)
+real(r8), intent(inout) :: obs_inc(ens_size), net_a
+
+real(r8) :: prior_mean, prior_var
+real(r8) :: active_ens(sub_size), active_obs_inc(sub_size)
+real(r8) :: new_val(sub_size)
+integer  :: i, ens_index(sub_size), new_index(sub_size)
+
+! Active ensemble
+active_ens = ens(subset)
+
+! Compute prior variance and mean from sample
+prior_mean = sum(active_ens) / sub_size
+prior_var  = sum((active_ens - prior_mean)**2) / (sub_size - 1)
+
+if (filter_kind == 1) then 
+   call obs_increment_eakf(active_ens, sub_size, prior_mean, prior_var, obs, obs_var, active_obs_inc, net_a)
+elseif (filter_kind == 2) then 
+   call obs_increment_enkf(active_ens, sub_size, prior_var, obs, obs_var, active_obs_inc)
+else if(filter_kind == 8) then
+   call obs_increment_rank_histogram(active_ens, sub_size, prior_var, obs, obs_var, active_obs_inc)
+endif
+
+! Sorting 
+if (sort_obs_inc) then 
+   new_val = active_ens + active_obs_inc
+   ! Sorting to make increments as small as possible
+   call index_sort(active_ens, ens_index, sub_size)
+   call index_sort(new_val, new_index, sub_size)
+   do i = 1, sub_size
+      active_obs_inc(ens_index(i)) = new_val(new_index(i)) - active_ens(ens_index(i))
+   end do
+endif
+
+obs_inc(subset) = active_obs_inc
+
+end subroutine obinc_active
 
 
 subroutine obs_increment_eakf(ens, ens_size, prior_mean, prior_var, obs, obs_var, obs_inc, a)
@@ -2089,7 +2164,7 @@ end subroutine update_ens_from_weights
 
 subroutine obs_updates_ens(ens_size, num_groups, ens, ens_loc, ens_kind, &
    obs_prior, obs_inc, obs_prior_mean, obs_prior_var, obs_loc, obs_type, obs_time,    &
-   net_a, grp_size, grp_beg, grp_end, reg_factor_obs_index,         &
+   net_a, grp_size, grp_beg, grp_end, reg_factor_obs_index, subset, sub_size,         &
    reg_factor_ens_index, final_factor, correl, correl_needed, inflate_only)
 
 integer,             intent(in)  :: ens_size
@@ -2110,6 +2185,8 @@ integer,             intent(in)  :: grp_beg(num_groups)
 integer,             intent(in)  :: grp_end(num_groups)
 integer,             intent(in)  :: reg_factor_obs_index
 integer(i8),         intent(in)  :: reg_factor_ens_index
+integer,             intent(in)  :: sub_size
+integer,             intent(in)  :: subset(sub_size)
 real(r8),            intent(inout) :: final_factor
 real(r8),            intent(out) :: correl(num_groups)
 logical,             intent(in)  :: correl_needed
@@ -2119,20 +2196,41 @@ real(r8) :: reg_coef(num_groups), increment(ens_size)
 real(r8) :: reg_factor
 integer  :: group, grp_bot, grp_top
 
-! Loop through groups to update the state variable ensemble members
-do group = 1, num_groups
-   grp_bot = grp_beg(group); grp_top = grp_end(group)
-   ! Do update of state, correl only needed for varying ss inflate
-   if(correl_needed) then
-      call update_from_obs_inc(obs_prior(grp_bot:grp_top), obs_prior_mean(group), &
-         obs_prior_var(group), obs_inc(grp_bot:grp_top), ens(grp_bot:grp_top), grp_size, &
-         increment(grp_bot:grp_top), reg_coef(group), net_a(group), correl(group))
-   else
-      call update_from_obs_inc(obs_prior(grp_bot:grp_top), obs_prior_mean(group), &
-         obs_prior_var(group), obs_inc(grp_bot:grp_top), ens(grp_bot:grp_top), grp_size, &
-         increment(grp_bot:grp_top), reg_coef(group), net_a(group))
+real(r8) :: sub_obs_prior(sub_size), sub_inc(sub_size)
+real(r8) :: sub_obs_prior_mean, sub_obs_prior_var
+
+if (sub_size < ens_size) then
+   ! Compute prior statistics from the active subset 
+   sub_obs_prior      = obs_prior(subset)
+   sub_obs_prior_mean = sum(sub_obs_prior) / sub_size
+   sub_obs_prior_var  = sum((sub_obs_prior - sub_obs_prior_mean)**2) / (sub_size - 1) 
+
+   if(correl_needed) then 
+      call update_from_obs_inc(sub_obs_prior, sub_obs_prior_mean, &
+         sub_obs_prior_var, obs_inc(subset), ens(subset), sub_size, &
+         sub_inc, reg_coef(1), net_a(1), correl(1))
+   else 
+      call update_from_obs_inc(sub_obs_prior, sub_obs_prior_mean, &
+         sub_obs_prior_var, obs_inc(subset), ens(subset), sub_size, &
+         sub_inc, reg_coef(1), net_a(1))
    endif
-end do
+
+else
+   ! Loop through groups to update the state variable ensemble members
+   do group = 1, num_groups
+      grp_bot = grp_beg(group); grp_top = grp_end(group)
+      ! Do update of state, correl only needed for varying ss inflate
+      if(correl_needed) then
+         call update_from_obs_inc(obs_prior(grp_bot:grp_top), obs_prior_mean(group), &
+            obs_prior_var(group), obs_inc(grp_bot:grp_top), ens(grp_bot:grp_top), grp_size, &
+            increment(grp_bot:grp_top), reg_coef(group), net_a(group), correl(group))
+      else
+         call update_from_obs_inc(obs_prior(grp_bot:grp_top), obs_prior_mean(group), &
+            obs_prior_var(group), obs_inc(grp_bot:grp_top), ens(grp_bot:grp_top), grp_size, &
+            increment(grp_bot:grp_top), reg_coef(group), net_a(group))
+      endif
+   end do
+endif
 
 if(num_groups > 1) then
    reg_factor = comp_reg_factor(num_groups, reg_coef, obs_time, &
@@ -2140,8 +2238,18 @@ if(num_groups > 1) then
    final_factor = min(final_factor, reg_factor)
 endif
 
+!write(*, '(A, 20F9.4)') 'prior ens: ', ens
+
 ! Get the updated ensemble
-if(.not. inflate_only) ens = ens + final_factor * increment
+if(.not. inflate_only) then 
+  if (sub_size < ens_size) then 
+     ens(subset) = ens(subset) + final_factor * sub_inc
+  else
+     ens = ens + final_factor * increment
+  endif
+endif
+
+!write(*, '(A, 20F9.4/)') 'poste ens: ', ens
 
 end subroutine obs_updates_ens
 
@@ -2637,6 +2745,57 @@ else
 endif
 
 end subroutine get_close_state_cached
+
+
+!--------------------------------------------------------------------
+!> returns an array containing k unique integers selected  
+!> randomly from 1:N. 
+
+function randperm_ens(N, k)
+
+integer, intent(in) :: N ! sample size
+integer, intent(in) :: k ! number of permutated values 
+integer  :: i, j, w, temp
+real(r8) :: u
+integer  :: array1(N), array2(k), shuffled(k)
+integer  :: randperm_ens(k)
+
+!if(first_inc_ran_call) then
+!   call init_random_seq(inc_ran_seq, my_task_id() + 1)
+!   first_inc_ran_call = .false.
+!endif
+
+call init_random_seq(inc_ran_seq)
+
+array1 = [(i, i = 1, N)]
+
+do w = 1, 10
+   do i = 1, N
+      u = random_uniform(inc_ran_seq)
+      j = 1 + floor(N*u)
+            
+      ! switch values
+      temp      = array1(j)
+      array1(j) = array1(i)
+      array1(i) = temp
+   enddo
+enddo
+
+shuffled = array1(1:k)
+
+call index_sort(shuffled, array2, k)
+
+do i = 1, k
+   randperm_ens(i) = shuffled(array2(i)) 
+enddo
+
+!write(*, '(X, A, 100I3)') 'shuffled ens:   ', array1 
+!write(*, '(X, A, 100I3)') 'randperm mat:   ', shuffled
+!write(*, '(X, A, 100I3)') 'active members: ', randperm_ens
+
+end function randperm_ens
+
+
 
 !--------------------------------------------------------------------
 !> log what the user has selected via the namelist choices
