@@ -6,24 +6,35 @@
 
 main() {
 
-
 export DART=$(git rev-parse --show-toplevel)
 source "$DART"/build_templates/buildfunctions.sh
 
-MODEL="none"
-EXTRA="$DART"/models/template/threed_model_mod.f90
-dev_test=1
-TEST="io"
-LOCATION="threed_sphere"
+MODEL=MARBL_column
+LOCATION=threed_sphere
+
 
 programs=(
-test_cf_conventions
-test_diag_structure
-test_read_write_restarts
-test_read_write_time
-test_state_structure
+closest_member_tool
+filter
+model_mod_check
+perfect_model_obs
 )
 
+serial_programs=(
+create_fixed_network_seq
+create_obs_sequence
+fill_inflation_restart
+integrate_model
+obs_common_subset
+obs_diag
+obs_sequence_tool
+)
+
+model_programs=(
+)
+
+model_serial_programs=(
+)
 
 # quickbuild arguments
 arguments "$@"
