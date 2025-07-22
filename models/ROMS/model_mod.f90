@@ -79,14 +79,18 @@ use   state_structure_mod, only : add_domain, get_model_variable_indices, &
                                   get_domain_size, get_varid_from_kind, &
                                   state_structure_info, get_kind_index
 
-use netcdf_utilities_mod, only : nc_add_global_attribute, nc_synchronize_file, nc_check, &
-                                 nc_add_global_creation_time, nc_begin_define_mode, &
-                                 nc_end_define_mode
+use netcdf_utilities_mod,  only : nc_add_global_attribute, nc_synchronize_file,        &    
+                                  nc_add_global_creation_time, nc_begin_define_mode,   &
+                                  nc_end_define_mode, nc_open_file_readonly,           &    
+                                  nc_close_file, nc_get_global_attribute,              &    
+                                  nc_get_dimension_size, nc_get_variable, nc_check,    &
+                                  nc_get_attribute_from_variable, nc_synchronize_file, &
+                                  nc_variable_exists, nc_dimension_exists 
 
 use location_io_mod,      only :  nc_write_location_atts, nc_get_location_varids, &
                                   nc_write_location
 
-use default_model_mod,     only : nc_write_model_vars, init_conditions, init_time, &
+use default_model_mod,    only : nc_write_model_vars, init_conditions, init_time, &
                                   adv_1step
 
 use typesizes
@@ -121,17 +125,14 @@ public :: nc_write_model_vars,           &
           get_close_state
 
 ! not required interfaces but useful for utility programs
-public :: get_time_information,          &
+public :: get_time_information, &
           get_location_from_ijk
-
+          
 ! version controlled file description for error handling, do not edit
-character(len=256), parameter :: source   = &
-   "$URL$"
-character(len=32 ), parameter :: revision = "$Revision$"
-character(len=128), parameter :: revdate  = "$Date$"
+character(len=256), parameter :: source  = 'ROMS/model_mod.f90'
 
 character(len=512) :: string1, string2, string3
-logical, save :: module_initialized = .false.
+logical, save      :: module_initialized = .false.
 
 ! things which can/should be in the model_nml
 !>@todo FIXME ... replace remaining references to VERTISHEIGHT with vert_localization_coord
@@ -139,20 +140,20 @@ logical  :: output_state_vector          = .false.
 integer  :: assimilation_period_days     = 1
 integer  :: assimilation_period_seconds  = 0
 integer  :: vert_localization_coord      = VERTISHEIGHT
-integer  :: debug = 0   ! turn up for more and more debug messages
-character(len=256) :: roms_filename = 'roms_input.nc'
+integer  :: debug                        = 0                ! turn up for more and more debug messages
+character(len=256) :: roms_filename      = 'roms_input.nc'
 
 ! DART contents are specified in the input.nml:&model_nml namelist.
 !>@todo  NF90_MAX_NAME is 256 ... this makes the namelist output unreadable
-integer, parameter :: MAX_STATE_VARIABLES = 8
-integer, parameter :: num_state_table_columns = 5
-character(len=vtablenamelength) :: variables(MAX_STATE_VARIABLES * num_state_table_columns ) = ' '
-character(len=vtablenamelength) :: var_names(MAX_STATE_VARIABLES) = ' '
-logical  ::                   update_list(MAX_STATE_VARIABLES) = .FALSE.
-integer  ::                     kind_list(MAX_STATE_VARIABLES) = MISSING_I
-real(r8) ::                    clamp_vals(MAX_STATE_VARIABLES,2) = MISSING_R8
+integer, parameter              :: MAX_STATE_VARIABLES                            = 8
+integer, parameter              :: table_columns                                  = 5
+character(len=vtablenamelength) :: variables(MAX_STATE_VARIABLES * table_columns) = ' '
+character(len=vtablenamelength) :: var_names(MAX_STATE_VARIABLES)                 = ' '
+logical                         :: update_list(MAX_STATE_VARIABLES)               = .FALSE.
+integer                         :: kind_list(MAX_STATE_VARIABLES)                 = MISSING_I
+real(r8)                        :: clamp_vals(MAX_STATE_VARIABLES, 2)             = MISSING_R8
 
-namelist /model_nml/  &
+namelist /model_nml/            &
    assimilation_period_days,    &
    assimilation_period_seconds, &
    roms_filename,               &
@@ -161,7 +162,6 @@ namelist /model_nml/  &
    variables
 
 integer :: nfields   ! This is the number of variables in the DART state vector.
-
 integer :: domain_id ! global variable for state_structure_mod routines
 
 !> Everything needed to describe a variable. Basically all the metadata from
@@ -174,7 +174,7 @@ integer :: domain_id ! global variable for state_structure_mod routines
 
 ! nx, ny and nz are the size of the rho grids.
 integer :: Nx = -1, Ny = -1, Nz = -1
-
+integer :: Nu = -1, Nv = -1, Nw = -1
 integer :: Nxi_rho
 integer :: Nxi_u
 integer :: Nxi_v
@@ -184,13 +184,16 @@ integer :: Neta_v
 integer :: Ns_rho
 integer :: Ns_w
 
+real(r8) :: Zmax = 5000.0_r8
+
 !>@todo FIXME ... nancy suggested creating pointers for each of these so
 !    we could simply use the myvarid as the index in the pointer ...
 
-real(r8), allocatable, target :: ULAT(:,:), ULON(:,:), UDEP(:,:,:), &
-                                 TLAT(:,:), TLON(:,:), TDEP(:,:,:), &
-                                 VLAT(:,:), VLON(:,:), VDEP(:,:,:), &
-                                 WDEP(:,:,:)
+real(r8), allocatable :: ULAT(:,:), ULON(:,:), UDEP(:,:,:), &
+                         TLAT(:,:), TLON(:,:), TDEP(:,:,:), &
+                         VLAT(:,:), VLON(:,:), VDEP(:,:,:), &
+                                               WDEP(:,:,:)
+logical, allocatable  :: TMSK(:,:), UMSK(:,:), VMSK(:,:)
 
 !>@todo FIXME : JPH may not need the WDEP array
 
@@ -207,6 +210,91 @@ contains
 !-----------------------------------------------------------------------
 ! All the REQUIRED interfaces come first - by convention.
 !-----------------------------------------------------------------------
+
+!-----------------------------------------------------------------------
+!>
+!> Called to do one time initialization of the model.
+!> In this case, it reads in the grid information, the namelist
+!> containing the variables of interest, where to get them, their size,
+!> their associated DART KIND, etc.
+!>
+!> In addition to harvesting the model metadata (grid,
+!> desired model advance step, etc.), it also fills a structure
+!> containing information about what variables are where in the DART
+!> framework.
+
+subroutine static_init_model()
+
+integer :: iunit, io
+integer :: ss, dd
+integer :: ncid
+
+character(len=32) :: calendar
+character(len=*), parameter :: routine = 'static_init_model'
+
+type(time_type) :: model_time
+
+if ( module_initialized ) return
+
+! The Plan:
+!
+! * read in the grid sizes from grid file
+! * allocate space, and read in actual grid values
+! * figure out model timestep
+! * Compute the model size.
+! * set the index numbers where the field types change
+
+! Print module information to log file and stdout.
+call register_module(source)
+
+module_initialized = .true.
+
+! Read the DART namelist for this model
+call find_namelist_in_file('input.nml', 'model_nml', iunit)
+read(iunit, nml = model_nml, iostat = io)
+call check_namelist_read(iunit, io, 'model_nml')
+
+! Record the namelist values used for the run
+if (do_nml_file()) write(nmlfileunit, nml=model_nml)
+if (do_nml_term()) write(     *     , nml=model_nml)
+
+model_timestep = set_model_time_step()
+call get_time(model_timestep, ss, dd)
+
+write(string1, *)'Assimilation period is ', dd, ' days ', ss, ' seconds'
+call error_handler(E_MSG, routine, string1, source)
+
+ncid = nc_open_file_readonly(roms_filename, routine)
+
+call get_time_information(roms_filename, ncid, 'ocean_time', 'ocean_time', &
+                          calendar=calendar, last_time=model_time)
+
+call set_calendar_type(trim(calendar))
+
+! Get the ROMS grid -- sizes and variables.
+call get_grid_dimensions()
+call get_grid()
+
+! parse_variable_input() fills var_names, kind_list, clamp_vals, update_list
+call parse_variable_input(variables, nfields)
+
+domain_id = add_domain(roms_filename, nfields, &
+                    var_names, kind_list, clamp_vals, update_list )
+
+if (debug > 0) call state_structure_info(domain_id)
+
+call nc_close_file(ncid, routine)
+
+model_size = get_domain_size(domain_id)
+
+call setup_interpolation()
+
+! This was needed in previous versions for scripting 
+! purposes to know how long to advance ROMS.
+! Deactivating for now
+! call write_roms_time_information(model_time)
+
+end subroutine static_init_model
 
 
 !-----------------------------------------------------------------------
@@ -264,6 +352,8 @@ elseif (myqty == QTY_V_CURRENT_COMPONENT) then
    location = set_location(VLON(iloc,jloc), VLAT(iloc,jloc), VDEP(iloc,jloc,vloc), VERTISHEIGHT)
 
 elseif (myqty == QTY_SEA_SURFACE_HEIGHT) then
+   ! TODO: So, because we are also doing waves and tides SSH (or zeta) could have a positive depth 
+   ! Need to check this down the line
    location = set_location(TLON(iloc,jloc), TLAT(iloc,jloc), 0.0_r8, VERTISSURFACE)
 
 else  ! Everything else is assumed to be on the rho points
@@ -313,7 +403,7 @@ istatus = 99
 
 write(string1,*)'model_interpolate should not be called.'
 write(string2,*)'we are getting forward observations directly from ROMS'
-call error_handler(E_MSG,'model_interpolate:',string1,source,revision,revdate, text2=string2)
+call error_handler(E_MSG,'model_interpolate:', string1, source, text2=string2)
 
 end subroutine model_interpolate
 
@@ -335,115 +425,6 @@ shortest_time_between_assimilations = model_timestep
 end function shortest_time_between_assimilations
 
 
-!-----------------------------------------------------------------------
-!>
-!> Called to do one time initialization of the model.
-!> In this case, it reads in the grid information, the namelist
-!> containing the variables of interest, where to get them, their size,
-!> their associated DART KIND, etc.
-!>
-!> In addition to harvesting the model metadata (grid,
-!> desired model advance step, etc.), it also fills a structure
-!> containing information about what variables are where in the DART
-!> framework.
-
-subroutine static_init_model()
-
-integer :: iunit, io
-integer :: ss, dd
-integer :: ncid
-
-character(len=32) :: calendar
-
-type(time_type) :: model_time
-
-if ( module_initialized ) return
-
-! The Plan:
-!
-! * read in the grid sizes from grid file
-! * allocate space, and read in actual grid values
-! * figure out model timestep
-! * Compute the model size.
-! * set the index numbers where the field types change
-
-! Print module information to log file and stdout.
-call register_module(source, revision, revdate)
-
-module_initialized = .true.
-
-! Read the DART namelist for this model
-call find_namelist_in_file('input.nml', 'model_nml', iunit)
-read(iunit, nml = model_nml, iostat = io)
-call check_namelist_read(iunit, io, 'model_nml')
-
-! Record the namelist values used for the run
-if (do_nml_file()) write(nmlfileunit, nml=model_nml)
-if (do_nml_term()) write(     *     , nml=model_nml)
-
-model_timestep = set_model_time_step()
-
-call get_time(model_timestep,ss,dd)
-
-write(string1,*)'assimilation period is ',dd,' days ',ss,' seconds'
-call error_handler(E_MSG,'static_init_model:',string1,source,revision,revdate)
-
-call nc_check( nf90_open(trim(roms_filename), NF90_NOWRITE, ncid), &
-                  'static_init_model', 'open '//trim(roms_filename))
-
-call get_time_information(roms_filename, ncid, 'ocean_time', 'ocean_time', &
-                          calendar=calendar, last_time=model_time)
-
-call set_calendar_type( trim(calendar) )
-
-! Get the ROMS grid -- sizes and variables.
-call get_grid_dimensions()
-call get_grid()
-
-! parse_variable_input() fills var_names, kind_list, clamp_vals, update_list
-call parse_variable_input(variables, nfields)
-
-domain_id = add_domain(roms_filename, nfields, &
-                    var_names, kind_list, clamp_vals, update_list )
-
-if (debug > 2) call state_structure_info(domain_id)
-
-call nc_check( nf90_close(ncid), &
-                  'static_init_model', 'close '//trim(roms_filename))
-
-model_size = get_domain_size(domain_id)
-
-call write_roms_time_information(model_time)
-
-end subroutine static_init_model
-
-
-!-----------------------------------------------------------------------
-!>
-!> Does any shutdown and clean-up needed for model.
-!>
-
-subroutine end_model()
-
-! good style ... perhaps you could deallocate stuff (from static_init_model?).
-! deallocate(state_loc)
-
-if (allocated(ULAT)) deallocate(ULAT)
-if (allocated(ULON)) deallocate(ULON)
-if (allocated(UDEP)) deallocate(UDEP)
-
-if (allocated(VLAT)) deallocate(VLAT)
-if (allocated(VLON)) deallocate(VLON)
-if (allocated(VDEP)) deallocate(VDEP)
-
-if (allocated(TLAT)) deallocate(TLAT)
-if (allocated(TLON)) deallocate(TLON)
-if (allocated(TDEP)) deallocate(TDEP)
-
-if (allocated(WDEP)) deallocate(WDEP)
-
-end subroutine end_model
-
 
 !-----------------------------------------------------------------------
 !>
@@ -457,6 +438,8 @@ end subroutine end_model
 !>                 state variables
 
 subroutine nc_write_model_atts(ncid, domain_id)
+
+character(len=*), parameter :: routine = 'nc_write_model_atts'
 
 integer, intent(in) :: ncid      ! netCDF file identifier
 integer, intent(in) :: domain_id
@@ -489,8 +472,6 @@ call nc_begin_define_mode(ncid)
 call nc_add_global_creation_time(ncid)
 
 call nc_add_global_attribute(ncid, "model_source", source)
-call nc_add_global_attribute(ncid, "model_revision", revision)
-call nc_add_global_attribute(ncid, "model_revdate", revdate)
 
 call nc_add_global_attribute(ncid, "model", "ROMS")
 
@@ -498,111 +479,111 @@ call nc_add_global_attribute(ncid, "model", "ROMS")
 ! Define the new dimensions IDs
 
 call nc_check(nf90_def_dim(ncid, name='xi_rho',  len = Nxi_rho, &
-     dimid = nxirhoDimID),'nc_write_model_atts', 'xi_rho def_dim '//trim(filename))
+     dimid = nxirhoDimID),routine, 'xi_rho def_dim '//trim(filename))
 
 call nc_check(nf90_def_dim(ncid, name='eta_rho', len = Neta_rho,&
-     dimid = netarhoDimID),'nc_write_model_atts', 'eta_rho def_dim '//trim(filename))
+     dimid = netarhoDimID),routine, 'eta_rho def_dim '//trim(filename))
 
 call nc_check(nf90_def_dim(ncid, name='s_rho',   len = Ns_rho,&
-     dimid = nsrhoDimID),'nc_write_model_atts', 's_rho def_dim '//trim(filename))
+     dimid = nsrhoDimID),routine, 's_rho def_dim '//trim(filename))
 
 call nc_check(nf90_def_dim(ncid, name='s_w',   len = Ns_w,&
-     dimid = nswDimID),'nc_write_model_atts', 's_w def_dim '//trim(filename))
+     dimid = nswDimID),routine, 's_w def_dim '//trim(filename))
 
 call nc_check(nf90_def_dim(ncid, name='xi_u',    len = Nxi_u,&
-     dimid = nxiuDimID),'nc_write_model_atts', 'xi_u def_dim '//trim(filename))
+     dimid = nxiuDimID),routine, 'xi_u def_dim '//trim(filename))
 
 call nc_check(nf90_def_dim(ncid, name='xi_v',    len = Nxi_v,&
-     dimid = nxivDimID),'nc_write_model_atts', 'xi_v def_dim '//trim(filename))
+     dimid = nxivDimID),routine, 'xi_v def_dim '//trim(filename))
 
 call nc_check(nf90_def_dim(ncid, name='eta_u',   len = Neta_u,&
-     dimid = netauDimID),'nc_write_model_atts', 'eta_u def_dim '//trim(filename))
+     dimid = netauDimID),routine, 'eta_u def_dim '//trim(filename))
 
 call nc_check(nf90_def_dim(ncid, name='eta_v',   len = Neta_v,&
-     dimid = netavDimID),'nc_write_model_atts', 'eta_v def_dim '//trim(filename))
+     dimid = netavDimID),routine, 'eta_v def_dim '//trim(filename))
 
 ! Create the Coordinate Variables and give them Attributes
 ! The values will be added in a later block of code.
 
 call nc_check(nf90_def_var(ncid,name='lon_rho', xtype=nf90_double, &
               dimids=(/ nxirhoDimID, netarhoDimID /), varid=VarID),&
-              'nc_write_model_atts', 'lon_rho def_var '//trim(filename))
+              routine, 'lon_rho def_var '//trim(filename))
 call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'rho longitudes'), &
-              'nc_write_model_atts', 'lon_rho long_name '//trim(filename))
+              routine, 'lon_rho long_name '//trim(filename))
 call nc_check(nf90_put_att(ncid,  VarID, 'units', 'degrees_east'), &
-              'nc_write_model_atts', 'lon_rho units '//trim(filename))
+              routine, 'lon_rho units '//trim(filename))
 
 call nc_check(nf90_def_var(ncid,name='lat_rho', xtype=nf90_double, &
               dimids=(/ nxirhoDimID, netarhoDimID /), varid=VarID),&
-              'nc_write_model_atts', 'lat_rho def_var '//trim(filename))
+              routine, 'lat_rho def_var '//trim(filename))
 call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'rho latitudes'), &
-              'nc_write_model_atts', 'lat_rho long_name '//trim(filename))
+              routine, 'lat_rho long_name '//trim(filename))
 call nc_check(nf90_put_att(ncid,  VarID, 'units', 'degrees_north'), &
-              'nc_write_model_atts', 'lat_rho units '//trim(filename))
+              routine, 'lat_rho units '//trim(filename))
 
 call nc_check(nf90_def_var(ncid,name='lon_u', xtype=nf90_double, &
               dimids=(/ nxiuDimID, netauDimID /), varid=VarID),&
-              'nc_write_model_atts', 'lon_u def_var '//trim(filename))
+              routine, 'lon_u def_var '//trim(filename))
 call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'u longitudes'), &
-              'nc_write_model_atts', 'lon_u long_name '//trim(filename))
+              routine, 'lon_u long_name '//trim(filename))
 call nc_check(nf90_put_att(ncid,  VarID, 'units', 'degrees_east'), &
-              'nc_write_model_atts', 'lon_u units '//trim(filename))
+              routine, 'lon_u units '//trim(filename))
 
 call nc_check(nf90_def_var(ncid,name='lat_u', xtype=nf90_double, &
               dimids=(/ nxiuDimID, netauDimID /), varid=VarID),&
-              'nc_write_model_atts', 'lat_u def_var '//trim(filename))
+              routine, 'lat_u def_var '//trim(filename))
 call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'u latitudes'), &
-              'nc_write_model_atts', 'lat_u long_name '//trim(filename))
+              routine, 'lat_u long_name '//trim(filename))
 call nc_check(nf90_put_att(ncid,  VarID, 'units', 'degrees_north'), &
-              'nc_write_model_atts', 'lat_u units '//trim(filename))
+              routine, 'lat_u units '//trim(filename))
 
 call nc_check(nf90_def_var(ncid,name='lon_v', xtype=nf90_double, &
               dimids=(/ nxivDimID, netavDimID /), varid=VarID),&
-              'nc_write_model_atts', 'lon_v def_var '//trim(filename))
+              routine, 'lon_v def_var '//trim(filename))
 call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'v longitudes'), &
-              'nc_write_model_atts', 'lon_v long_name '//trim(filename))
+              routine, 'lon_v long_name '//trim(filename))
 call nc_check(nf90_put_att(ncid,  VarID, 'units', 'degrees_east'), &
-              'nc_write_model_atts', 'lon_v units '//trim(filename))
+              routine, 'lon_v units '//trim(filename))
 
 call nc_check(nf90_def_var(ncid,name='lat_v', xtype=nf90_double, &
               dimids=(/ nxivDimID, netavDimID /), varid=VarID),&
-              'nc_write_model_atts', 'lat_v def_var '//trim(filename))
+              routine, 'lat_v def_var '//trim(filename))
 call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'v latitudes'), &
-              'nc_write_model_atts', 'lat_v long_name '//trim(filename))
+              routine, 'lat_v long_name '//trim(filename))
 call nc_check(nf90_put_att(ncid,  VarID, 'units', 'degrees_north'), &
-              'nc_write_model_atts', 'lat_v units '//trim(filename))
+              routine, 'lat_v units '//trim(filename))
 
-call nc_check(nf90_def_var(ncid,name='z_rho', xtype=nf90_double, &
-              dimids=(/ nxirhoDimID, netarhoDimID, nsrhoDimID /), varid=VarID),&
-              'nc_write_model_atts', 'z_rho def_var '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'z at rho'), &
-              'nc_write_model_atts', 'z_rho long_name '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'units', 'm'), &
-              'nc_write_model_atts', 'z_rho units '//trim(filename))
+!call nc_check(nf90_def_var(ncid,name='z_rho', xtype=nf90_double, &
+!              dimids=(/ nxirhoDimID, netarhoDimID, nsrhoDimID /), varid=VarID),&
+!              routine, 'z_rho def_var '//trim(filename))
+!call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'z at rho'), &
+!              routine, 'z_rho long_name '//trim(filename))
+!call nc_check(nf90_put_att(ncid,  VarID, 'units', 'm'), &
+!              routine, 'z_rho units '//trim(filename))
 
-call nc_check(nf90_def_var(ncid,name='z_u', xtype=nf90_double, &
-              dimids=(/ nxiuDimID, netauDimID, nsrhoDimID /), varid=VarID),&
-              'nc_write_model_atts', 'z_u def_var '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'z at rho'), &
-              'nc_write_model_atts', 'z_u long_name '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'units', 'm'), &
-              'nc_write_model_atts', 'z_u units '//trim(filename))
+!call nc_check(nf90_def_var(ncid,name='z_u', xtype=nf90_double, &
+!              dimids=(/ nxiuDimID, netauDimID, nsrhoDimID /), varid=VarID),&
+!              routine, 'z_u def_var '//trim(filename))
+!call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'z at rho'), &
+!              routine, 'z_u long_name '//trim(filename))
+!call nc_check(nf90_put_att(ncid,  VarID, 'units', 'm'), &
+!              routine, 'z_u units '//trim(filename))
 
-call nc_check(nf90_def_var(ncid,name='z_v', xtype=nf90_double, &
-              dimids=(/ nxivDimID, netavDimID, nsrhoDimID /), varid=VarID),&
-              'nc_write_model_atts', 'z_v def_var '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'z at rho'), &
-              'nc_write_model_atts', 'z_v long_name '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'units', 'm'), &
-              'nc_write_model_atts', 'z_v units '//trim(filename))
+!call nc_check(nf90_def_var(ncid,name='z_v', xtype=nf90_double, &
+!              dimids=(/ nxivDimID, netavDimID, nsrhoDimID /), varid=VarID),&
+!              routine, 'z_v def_var '//trim(filename))
+!call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'z at rho'), &
+!              routine, 'z_v long_name '//trim(filename))
+!call nc_check(nf90_put_att(ncid,  VarID, 'units', 'm'), &
+!              routine, 'z_v units '//trim(filename))
 
-call nc_check(nf90_def_var(ncid,name='z_w', xtype=nf90_double, &
-              dimids=(/ nxirhoDimID, netarhoDimID, nswDimID /), varid=VarID),&
-              'nc_write_model_atts', 'z_w def_var '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'z at rho'), &
-              'nc_write_model_atts', 'z_w long_name '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'units', 'm'), &
-              'nc_write_model_atts', 'z_w units '//trim(filename))
+!call nc_check(nf90_def_var(ncid,name='z_w', xtype=nf90_double, &
+!              dimids=(/ nxirhoDimID, netarhoDimID, nswDimID /), varid=VarID),&
+!              routine, 'z_w def_var '//trim(filename))
+!call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'z at rho'), &
+!              routine, 'z_w long_name '//trim(filename))
+!call nc_check(nf90_put_att(ncid,  VarID, 'units', 'm'), &
+!              routine, 'z_w units '//trim(filename))
 
 ! Finished with dimension/variable definitions, must end 'define' mode to fill.
 
@@ -613,60 +594,60 @@ call nc_end_define_mode(ncid)
 ! the RHO grid
 
 call nc_check(NF90_inq_varid(ncid, 'lon_rho', VarID), &
-              'nc_write_model_atts', 'lon_rho inq_varid '//trim(filename))
+              routine, 'lon_rho inq_varid '//trim(filename))
 call nc_check(nf90_put_var(ncid, VarID, TLON ), &
-             'nc_write_model_atts', 'lon_rho put_var '//trim(filename))
+              routine, 'lon_rho put_var '//trim(filename))
 
 call nc_check(NF90_inq_varid(ncid, 'lat_rho', VarID), &
-              'nc_write_model_atts', 'lat_rho inq_varid '//trim(filename))
+              routine, 'lat_rho inq_varid '//trim(filename))
 call nc_check(nf90_put_var(ncid, VarID, TLAT ), &
-             'nc_write_model_atts', 'lat_rho put_var '//trim(filename))
+              routine, 'lat_rho put_var '//trim(filename))
 
-call nc_check(NF90_inq_varid(ncid, 'z_rho', VarID), &
-              'nc_write_model_atts', 'z_rho inq_varid '//trim(filename))
-call nc_check(nf90_put_var(ncid, VarID, TDEP ), &
-             'nc_write_model_atts', 'z_rho put_var '//trim(filename))
+!call nc_check(NF90_inq_varid(ncid, 'z_rho', VarID), &
+!              routine, 'z_rho inq_varid '//trim(filename))
+!call nc_check(nf90_put_var(ncid, VarID, TDEP ), &
+!              routine, 'z_rho put_var '//trim(filename))
 
 ! the U grid
 
 call nc_check(NF90_inq_varid(ncid, 'lon_u', VarID), &
-              'nc_write_model_atts', 'lon_u inq_varid '//trim(filename))
+              routine, 'lon_u inq_varid '//trim(filename))
 call nc_check(nf90_put_var(ncid, VarID, ULON ), &
-             'nc_write_model_atts', 'lon_u put_var '//trim(filename))
+              routine, 'lon_u put_var '//trim(filename))
 
 call nc_check(NF90_inq_varid(ncid, 'lat_u', VarID), &
-              'nc_write_model_atts', 'lat_u inq_varid '//trim(filename))
+              routine, 'lat_u inq_varid '//trim(filename))
 call nc_check(nf90_put_var(ncid, VarID, ULAT ), &
-             'nc_write_model_atts', 'lat_u put_var '//trim(filename))
+              routine, 'lat_u put_var '//trim(filename))
 
-call nc_check(NF90_inq_varid(ncid, 'z_u', VarID), &
-              'nc_write_model_atts', 'z_u inq_varid '//trim(filename))
-call nc_check(nf90_put_var(ncid, VarID, UDEP ), &
-             'nc_write_model_atts', 'z_u put_var '//trim(filename))
+!call nc_check(NF90_inq_varid(ncid, 'z_u', VarID), &
+!              routine, 'z_u inq_varid '//trim(filename))
+!call nc_check(nf90_put_var(ncid, VarID, UDEP ), &
+!              routine, 'z_u put_var '//trim(filename))
 
 ! the V grid
 
 call nc_check(NF90_inq_varid(ncid, 'lon_v', VarID), &
-              'nc_write_model_atts', 'lon_v inq_varid '//trim(filename))
+              routine, 'lon_v inq_varid '//trim(filename))
 call nc_check(nf90_put_var(ncid, VarID, VLON ), &
-             'nc_write_model_atts', 'lon_v put_var '//trim(filename))
+              routine, 'lon_v put_var '//trim(filename))
 
 call nc_check(NF90_inq_varid(ncid, 'lat_v', VarID), &
-              'nc_write_model_atts', 'lat_v inq_varid '//trim(filename))
+              routine, 'lat_v inq_varid '//trim(filename))
 call nc_check(nf90_put_var(ncid, VarID, VLAT ), &
-             'nc_write_model_atts', 'lat_v put_var '//trim(filename))
+              routine, 'lat_v put_var '//trim(filename))
 
-call nc_check(NF90_inq_varid(ncid, 'z_v', VarID), &
-              'nc_write_model_atts', 'z_v inq_varid '//trim(filename))
-call nc_check(nf90_put_var(ncid, VarID, VDEP ), &
-             'nc_write_model_atts', 'z_v put_var '//trim(filename))
+!call nc_check(NF90_inq_varid(ncid, 'z_v', VarID), &
+!              routine, 'z_v inq_varid '//trim(filename))
+!call nc_check(nf90_put_var(ncid, VarID, VDEP ), &
+!              routine, 'z_v put_var '//trim(filename))
 
 ! the W grid
 
-call nc_check(NF90_inq_varid(ncid, 'z_w', VarID), &
-              'nc_write_model_atts', 'z_w inq_varid '//trim(filename))
-call nc_check(nf90_put_var(ncid, VarID, WDEP ), &
-             'nc_write_model_atts', 'z_w put_var '//trim(filename))
+!call nc_check(NF90_inq_varid(ncid, 'z_w', VarID), &
+!              routine, 'z_w inq_varid '//trim(filename))
+!call nc_check(nf90_put_var(ncid, VarID, WDEP ), &
+!              routine, 'z_w put_var '//trim(filename))
 
 ! Flush the buffer and leave netCDF file open
 call nc_synchronize_file(ncid)
@@ -740,7 +721,7 @@ if (present(adv_to_time)) then
    write(string1,*)'ROMS/DART not configured to advance ROMS.'
    write(string2,*)'called with optional advance_to_time of'
    call error_handler(E_ERR, 'write_model_time', string1, &
-              source, revision, revdate, text2=string2,text3=string3)
+              source, text2=string2,text3=string3)
 endif
 
 ! If the ocean_time variable exists, we are updating a ROMS file,
@@ -788,7 +769,7 @@ if ( .not. module_initialized ) call static_init_model
 
 if ( .not. file_exist(filename) ) then
    write(string1,*) 'cannot open file ', trim(filename),' for reading.'
-   call error_handler(E_ERR,'read_model_time',string1,source,revision,revdate)
+   call error_handler(E_ERR,'read_model_time', string1, source)
 endif
 
 call nc_check( nf90_open(trim(filename), NF90_NOWRITE, ncid), &
@@ -842,36 +823,31 @@ end function set_model_time_step
 subroutine get_grid_dimensions()
 
 integer :: ncid
+character(len=*), parameter :: routine = 'get_grid_dimensions'
 
 ! Read the (static) grid dimensions from the ROMS grid file.
+ncid = nc_open_file_readonly(roms_filename, routine)
 
-call nc_check(nf90_open(trim(roms_filename), nf90_nowrite, ncid), &
-              'get_grid_dimensions', 'open '//trim(roms_filename))
+Nxi_rho  = nc_get_dimension_size(ncid, 'xi_rho',  routine)
+Nxi_u    = nc_get_dimension_size(ncid, 'xi_u',    routine)
+Nxi_v    = nc_get_dimension_size(ncid, 'xi_v',    routine)
+Neta_rho = nc_get_dimension_size(ncid, 'eta_rho', routine)
+Neta_u   = nc_get_dimension_size(ncid, 'eta_u',   routine)
+Neta_v   = nc_get_dimension_size(ncid, 'eta_v',   routine)
 
-Nxi_rho   = get_dimension_length(ncid, 'xi_rho',   roms_filename)
-Nxi_u     = get_dimension_length(ncid, 'xi_u',     roms_filename)
-Nxi_v     = get_dimension_length(ncid, 'xi_v',     roms_filename)
-Neta_rho  = get_dimension_length(ncid, 'eta_rho',  roms_filename)
-Neta_u    = get_dimension_length(ncid, 'eta_u',    roms_filename)
-Neta_v    = get_dimension_length(ncid, 'eta_v',    roms_filename)
+! Read the vertical dimensions 
+Ns_rho   = nc_get_dimension_size(ncid, 's_rho', routine)
+Ns_w     = nc_get_dimension_size(ncid, 's_w'  , routine)
 
-call nc_check(nf90_close(ncid), &
-              'get_grid_dimensions','close '//trim(roms_filename))
+call nc_close_file(ncid, routine)
 
-! Read the vertical dimensions from the dedicated file.
+Nx = Nxi_rho  ! Setting the nominal value of the 'global' variables
+Ny = Neta_rho ! Setting the nominal value of the 'global' variables
+Nz = Ns_rho   ! Setting the nominal value of the 'global' variables
 
-call nc_check(nf90_open(trim(roms_filename), nf90_nowrite, ncid), &
-               'get_grid_dimensions', 'open '//trim(roms_filename))
-
-Ns_rho    = get_dimension_length(ncid, 's_rho',    roms_filename)
-Ns_w      = get_dimension_length(ncid, 's_w'  ,    roms_filename)
-
-call nc_check(nf90_close(ncid), &
-              'get_grid_dimensions','close '//trim(roms_filename))
-
-Nx =  Nxi_rho  ! Setting the nominal value of the 'global' variables
-Ny = Neta_rho  ! Setting the nominal value of the 'global' variables
-Nz =   Ns_rho  ! Setting the nominal value of the 'global' variables
+Nu = Nxi_u
+Nv = Neta_v
+Nw = Ns_w
 
 end subroutine get_grid_dimensions
 
@@ -896,113 +872,213 @@ end subroutine get_grid_dimensions
 
 subroutine get_grid()
 
-integer  :: ncid, VarID
+integer                     :: ncid, k
+character(len=*), parameter :: routine = 'get_grid'
 
-real(r8), parameter :: all_land = 0.001_r8
+real(r8), allocatable       :: h(:,:), zeta(:,:), zeta_lf(:,:,:) 
+real(r8), allocatable       :: mask(:,:)   ! Land mask: 0 land & 1 water
+real(r8), allocatable       :: Cs_r(:), Cs_w(:)
+real(r8), allocatable       :: sc_r, sc_w
+real(r8)                    :: hc
+integer                     :: Vt
 
-if (.not. allocated(ULAT)) allocate(ULAT(Nxi_u, Neta_u))
-if (.not. allocated(ULON)) allocate(ULON(Nxi_u, Neta_u))
-if (.not. allocated(UDEP)) allocate(UDEP(Nxi_u, Neta_u, Nz))
+if (.not. allocated(ULAT)) allocate(ULAT(Nu, Ny))
+if (.not. allocated(ULON)) allocate(ULON(Nu, Ny))
+if (.not. allocated(UMSK)) allocate(UMSK(Nu, Ny))
+if (.not. allocated(UDEP)) allocate(UDEP(Nu, Ny, Nz))
 
-if (.not. allocated(VLAT)) allocate(VLAT(Nxi_v, Neta_v))
-if (.not. allocated(VLON)) allocate(VLON(Nxi_v, Neta_v))
-if (.not. allocated(VDEP)) allocate(VDEP(Nxi_v, Neta_v, Nz))
+if (.not. allocated(VLAT)) allocate(VLAT(Nx, Nv))
+if (.not. allocated(VLON)) allocate(VLON(Nx, Nv))
+if (.not. allocated(VMSK)) allocate(VMSK(Nx, Nv))
+if (.not. allocated(VDEP)) allocate(VDEP(Nx, Nv, Nz))
 
-if (.not. allocated(TLAT)) allocate(TLAT(Nxi_rho, Neta_rho))
-if (.not. allocated(TLON)) allocate(TLON(Nxi_rho, Neta_rho))
-if (.not. allocated(TDEP)) allocate(TDEP(Nxi_rho, Neta_rho, Nz))
-if (.not. allocated(WDEP)) allocate(WDEP(Nxi_rho, Neta_rho, Ns_w))
+if (.not. allocated(TLAT)) allocate(TLAT(Nx, Ny))
+if (.not. allocated(TLON)) allocate(TLON(Nx, Ny))
+if (.not. allocated(TMSK)) allocate(TMSK(Nx, Ny))
+if (.not. allocated(TDEP)) allocate(TDEP(Nx, Ny, Nz))
 
-! Read the vertical information from the (separate) roms_filename
+if (.not. allocated(WDEP)) allocate(WDEP(Nx, Ny, Nw))
 
-call nc_check(nf90_open(trim(roms_filename), nf90_nowrite, ncid), &
-      'get_grid', 'open '//trim(roms_filename))
+! Read the vertical information 
+ncid = nc_open_file_readonly(roms_filename, routine)
 
-call nc_check(nf90_inq_varid(ncid, 'z_u', VarID), &
-      'get_grid', 'inq_varid z_u '//trim(roms_filename))
-call nc_check(nf90_get_var( ncid, VarID, UDEP), &
-      'get_grid', 'get_var z_u '//trim(roms_filename))
+! Check whether physical depth data exist in the restart file
+if (nc_variable_exists(ncid, 'z_rho')) then 
+   ! Physical depth exists in the Netcdf file
+   call nc_get_variable(ncid, 'z_u'  , UDEP, routine)
+   call nc_get_variable(ncid, 'z_w'  , WDEP, routine)
+   call nc_get_variable(ncid, 'z_v'  , VDEP, routine)
+   call nc_get_variable(ncid, 'z_rho', TDEP, routine)
+else
+   ! Need to compute the physical depth
+   ! Check whether zeta is coming from a history or a restart file
+   ! The 3rd dimension shouldn't exist in a history file
+   allocate(zeta(Nx, Ny), h(Nx, Ny))   
+   allocate(Cs_r(Nz), Cs_w(Ns_w))
+   
+   if (nc_dimension_exists(ncid, 'three')) then 
+      allocate(zeta_lf(Nx, Ny, 3))
+      zeta = zeta_lf(:, :, 1)
+   else 
+      call nc_get_variable(ncid, 'zeta'   , zeta, routine)
+   endif 
+   call nc_get_variable(ncid, 'h'         , h     , routine)
+   call nc_get_variable(ncid, 'hc'        , hc    , routine)
+   call nc_get_variable(ncid, 'Cs_r'      , Cs_r  , routine)
+   call nc_get_variable(ncid, 'Cs_w'      , Cs_w  , routine)
+   call nc_get_variable(ncid, 'Vtransform', Vt    , routine)
 
-call nc_check(nf90_inq_varid(ncid, 'z_w', VarID), &
-      'get_grid', 'inq_varid z_w '//trim(roms_filename))
-call nc_check(nf90_get_var( ncid, VarID, WDEP), &
-      'get_grid', 'get_var z_w '//trim(roms_filename))
+   call compute_physical_depth(h, zeta, Cs_r, Cs_w, hc, Vt, &
+                               TDEP, WDEP, UDEP, VDEP)     
+endif
 
-call nc_check(nf90_inq_varid(ncid, 'z_v', VarID), &
-      'get_grid', 'inq_varid z_v '//trim(roms_filename))
-call nc_check(nf90_get_var( ncid, VarID, VDEP), &
-      'get_grid', 'get_var z_v '//trim(roms_filename))
+! Read in the land mask
+TMSK = .false.
+UMSK = .false.
+VMSK = .false.
 
-call nc_check(nf90_inq_varid(ncid, 'z_rho', VarID), &
-      'get_grid', 'inq_varid z_rho '//trim(roms_filename))
-call nc_check(nf90_get_var( ncid, VarID, TDEP), &
-      'get_grid', 'get_var z_rho '//trim(roms_filename))
+allocate(mask(Nx, Ny))
+call nc_get_variable(ncid, 'mask_rho', mask, routine)
+where(mask < 1.0_r8) TMSK = .true. ! mask is active where land is
+deallocate(mask)
 
-call nc_check(nf90_close(ncid), &
-             'get_var','close '//trim(roms_filename))
+allocate(mask(Nu, Ny))
+call nc_get_variable(ncid, 'mask_u', mask, routine)
+where(mask < 1.0_r8) UMSK = .true.
+deallocate(mask)
+
+allocate(mask(Nx, Nv))
+call nc_get_variable(ncid, 'mask_v', mask, routine)
+where(mask < 1.0_r8) VMSK = .true.
+deallocate(mask)
 
 ! Read the rest of the grid information from the traditional grid file
-
-call nc_check(nf90_open(trim(roms_filename), nf90_nowrite, ncid), &
-      'get_grid', 'open '//trim(roms_filename))
-
-call nc_check(nf90_inq_varid(ncid, 'lon_rho', VarID), &
-   'get_grid', 'inq_varid lon_rho '//trim(roms_filename))
-call nc_check(nf90_get_var( ncid, VarID, TLON), &
-      'get_grid', 'get_var lon_rho '//trim(roms_filename))
+call nc_get_variable(ncid, 'lon_rho', TLON, routine)
+call nc_get_variable(ncid, 'lat_rho', TLAT, routine)
+call nc_get_variable(ncid, 'lon_u'  , ULON, routine)
+call nc_get_variable(ncid, 'lat_u'  , ULAT, routine)
+call nc_get_variable(ncid, 'lon_v'  , VLON, routine)
+call nc_get_variable(ncid, 'lat_v'  , VLAT, routine)
 
 where (TLON < 0.0_r8) TLON = TLON + 360.0_r8
-
-call nc_check(nf90_inq_varid(ncid, 'lat_rho', VarID), &
-      'get_grid', 'inq_varid lat_rho '//trim(roms_filename))
-call nc_check(nf90_get_var( ncid, VarID, TLAT), &
-      'get_grid', 'get_var lat_rho '//trim(roms_filename))
-
-call nc_check(nf90_inq_varid(ncid, 'lon_u', VarID), &
-      'get_grid', 'inq_varid lon_u '//trim(roms_filename))
-call nc_check(nf90_get_var( ncid, VarID, ULON), &
-      'get_grid', 'get_var lon_u '//trim(roms_filename))
-
 where (ULON < 0.0_r8) ULON = ULON + 360.0_r8
-
-call nc_check(nf90_inq_varid(ncid, 'lat_u', VarID), &
-      'get_grid', 'inq_varid lat_u '//trim(roms_filename))
-call nc_check(nf90_get_var( ncid, VarID, ULAT), &
-      'get_grid', 'get_var lat_u '//trim(roms_filename))
-
-call nc_check(nf90_inq_varid(ncid, 'lon_v', VarID), &
-      'get_grid', 'inq_varid lon_v '//trim(roms_filename))
-call nc_check(nf90_get_var( ncid, VarID, VLON), &
-      'get_grid', 'get_var lon_v '//trim(roms_filename))
-
 where (VLON < 0.0_r8) VLON = VLON + 360.0_r8
-
-call nc_check(nf90_inq_varid(ncid, 'lat_v', VarID), &
-      'get_grid', 'inq_varid lat_v '//trim(roms_filename))
-call nc_check(nf90_get_var( ncid, VarID, VLAT), &
-      'get_grid', 'get_var lat_v '//trim(roms_filename))
 
 ! Be aware that all the depths are negative values.
 ! The surface of the ocean is 0.0, the deepest is a big negative value.
-
 if (do_output() .and. debug > 0) then
-    write(string1,*)'    min/max ULON ',minval(ULON), maxval(ULON)
-    write(string2,*)    'min/max ULAT ',minval(ULAT), maxval(ULAT)
-    write(string3,*)    'min/max UDEP ',minval(UDEP), maxval(UDEP)
-    call error_handler(E_MSG,'get_grid',string1, text2=string2, text3=string3)
+    write(string1,*) '    min/max ULON ', minval(ULON), maxval(ULON)
+    write(string2,*)     'min/max ULAT ', minval(ULAT), maxval(ULAT)
+    write(string3,*)     'min/max UDEP ', minval(UDEP), maxval(UDEP, MASK=UDEP<Zmax)
+    call error_handler(E_MSG, routine, string1, text2=string2, text3=string3)
 
-    write(string1,*)'    min/max VLON ',minval(VLON), maxval(VLON)
-    write(string2,*)    'min/max VLAT ',minval(VLAT), maxval(VLAT)
-    write(string3,*)    'min/max VDEP ',minval(VDEP), maxval(VDEP)
-    call error_handler(E_MSG,'get_grid',string1, text2=string2, text3=string3)
+    write(string1,*) '    min/max VLON ', minval(VLON), maxval(VLON)
+    write(string2,*)     'min/max VLAT ', minval(VLAT), maxval(VLAT)
+    write(string3,*)     'min/max VDEP ', minval(VDEP), maxval(VDEP, MASK=VDEP<Zmax)
+    call error_handler(E_MSG, routine, string1, text2=string2, text3=string3)
 
-    write(string1,*)'    min/max TLON ',minval(TLON), maxval(TLON)
-    write(string2,*)    'min/max TLAT ',minval(TLAT), maxval(TLAT)
-    write(string3,*)    'min/max TDEP ',minval(TDEP), maxval(TDEP)
-    call error_handler(E_MSG,'get_grid',string1, text2=string2, text3=string3)
+    write(string1,*) '    min/max TLON ', minval(TLON), maxval(TLON)
+    write(string2,*)     'min/max TLAT ', minval(TLAT), maxval(TLAT)
+    write(string3,*)     'min/max TDEP ', minval(TDEP), maxval(TDEP, MASK=TDEP<Zmax)
+    call error_handler(E_MSG, routine, string1, text2=string2, text3=string3)
+
+    write(string1,*)'    min/max WDEP ', minval(WDEP), maxval(WDEP, MASK=WDEP<Zmax)
+    call error_handler(E_MSG, routine, string1)
 endif
 
+call nc_close_file(ncid, routine)
+
 end subroutine get_grid
+
+
+
+!-----------------------------------------------------------------------
+!>
+!> Fill the array of requested variables, dart kinds, possible min/max
+subroutine compute_physical_depth(h, z, Cr, Cw, hc, Vt, z_r, z_w, z_u, z_v)
+
+character(len=*), parameter :: routine = 'compute_physical_depth'
+
+real(r8), intent(in)  :: h(:,:), z(:,:), Cr(:), Cw(:)
+real(r8), intent(in)  :: hc
+integer , intent(in)  :: Vt
+
+
+real(r8), intent(out) :: z_r(:,:,:), z_w(:,:,:)
+real(r8), intent(out) :: z_u(:,:,:), z_v(:,:,:)
+
+integer  :: ix, iy, ik
+real(r8) :: sr(Nz), sw(Ns_w)
+real(r8) :: z0
+
+! s-coordinates at RHO-points
+do ik = 1, Nz
+   sr(ik) = (ik - 0.5_r8 - Nz) / Nz
+enddo
+
+! s-coordinates at W-points
+do ik = 0, Nz
+   sw(ik+1) = (real(ik) - Nz) / Nz
+enddo
+
+if (debug > 100) then 
+   do ik = 1, Nz
+      write(*, '(A, i3, A, f10.7, A, f10.7, A, f10.7)') &
+               'Layer: ', ik, ', S_RHO: ', sr(ik), &
+               ', S_W: ', sw(ik), ' .. ', sw(ik+1)
+   enddo
+endif
+
+! Compute z_r and z_w
+do ix = 1, Nx
+   do iy = 1, Ny
+
+      do ik = 1, Nz
+         if (Vt == 1) then ! Original transformation
+            z0 = hc*(sr(ik) - Cr(ik)) + Cr(ik)*h(ix, iy) 
+            z_r(ix, iy, ik) = z0 + z(ix, iy) * (1.0_r8 + z0/h(ix, iy))
+         elseif (Vt == 2) then ! New transformation
+             z0 = (hc*sr(ik) + Cr(ik)*h(ix, iy))/(hc + h(ix, iy)) 
+             z_r(ix, iy, ik) = z(ix, iy) + z0*(z(ix, iy) + h(ix, iy)) 
+         else
+            string1 = 'Unsupported Vtransform'
+            call error_handler(E_ERR, routine, string1)
+         endif 
+         !z_r(ix, iy, ik) = z_r(ix, iy, ik) * mask(ix, iy)
+      enddo
+
+      do ik = 1, Nz+1
+         if (Vt == 1) then ! Original transformation
+            z0 = hc*(sw(ik) - Cw(ik)) + Cw(ik)*h(ix, iy) 
+            z_w(ix, iy, ik) = z0 + z(ix, iy) * (1.0_r8 + z0/h(ix, iy)) 
+         elseif (Vt == 2) then ! New transformation
+             z0 = (hc*sw(ik) + Cw(ik)*h(ix, iy))/(hc + h(ix, iy))
+             z_w(ix, iy, ik) = z(ix, iy) + z0*(z(ix, iy) + h(ix, iy))
+         else
+            string1 = 'Unsupported Vtransform'
+            call error_handler(E_ERR, routine, string1)
+         endif
+         !z_w(ix, iy, ik) = z_w(ix, iy, ik) * mask(ix, iy)
+      enddo
+
+   enddo
+enddo
+
+! Compute z_u; average in xi direction 
+do ix = 1, Nx-1
+   do iy = 1, Ny
+      z_u(ix, iy, :) = 0.5_r8 * (z_r(ix, iy, :) + z_r(ix+1, iy, :))
+   enddo
+enddo
+
+! Compute z_v; average in eta direction 
+do ix = 1, Nx
+   do iy = 1, Ny-1
+      z_v(ix, iy, :) = 0.5_r8 * (z_r(ix, iy, :) + z_r(ix, iy+1, :))
+   enddo
+enddo
+
+end subroutine 
 
 
 !-----------------------------------------------------------------------
@@ -1013,8 +1089,9 @@ end subroutine get_grid
 !>@param state_variables the list of variables and kinds from model_mod_nml
 !>@param ngood the number of variable/KIND pairs specified
 
-subroutine parse_variable_input( state_variables, ngood )
+subroutine parse_variable_input(state_variables, ngood)
 
+character(len=*), parameter   :: routine = 'parse_variable_input'
 character(len=*), intent(in)  :: state_variables(:)
 integer,          intent(out) :: ngood
 
@@ -1028,24 +1105,24 @@ character(len=NF90_MAX_NAME) :: state_or_aux  ! column 5   change to updateable
 ngood = 0
 MyLoop : do i = 1, MAX_STATE_VARIABLES
 
-   varname      = trim(state_variables(num_state_table_columns*i-4))
-   dartstr      = trim(state_variables(num_state_table_columns*i-3))
-   minvalstring = trim(state_variables(num_state_table_columns*i-2))
-   maxvalstring = trim(state_variables(num_state_table_columns*i-1))
-   state_or_aux = trim(state_variables(num_state_table_columns*i  ))
+   varname      = trim(state_variables(table_columns*i-4))
+   dartstr      = trim(state_variables(table_columns*i-3))
+   minvalstring = trim(state_variables(table_columns*i-2))
+   maxvalstring = trim(state_variables(table_columns*i-1))
+   state_or_aux = trim(state_variables(table_columns*i  ))
 
    if ( varname == ' ' .and. dartstr == ' ' ) exit MyLoop ! Found end of list.
 
    if ( varname == ' ' .or. dartstr == ' ' ) then
       string1 = 'model_nml:model "variables" not fully specified'
-      call error_handler(E_ERR,'parse_variable_input:',string1,source,revision,revdate)
+      call error_handler(E_ERR,'parse_variable_input:', string1, source)
    endif
 
    ! Make sure DART kind is valid
 
    if( get_index_for_quantity(dartstr) < 0 ) then
       write(string1,'(''there is no quantity <'',a,''> in obs_kind_mod.f90'')') trim(dartstr)
-      call error_handler(E_ERR,'parse_variable_input:',string1,source,revision,revdate)
+      call error_handler(E_ERR, routine, string1, source)
    endif
 
    call to_upper(minvalstring)
@@ -1065,7 +1142,7 @@ enddo MyLoop
 if (ngood == MAX_STATE_VARIABLES) then
    string1 = 'WARNING: There is a possibility you need to increase ''MAX_STATE_VARIABLES'''
    write(string2,'(''WARNING: you have specified at least '',i4,'' perhaps more.'')')ngood
-   call error_handler(E_MSG,'parse_variable_input:',string1,source,revision,revdate,text2=string2)
+   call error_handler(E_MSG, routine, string1, source, text2=string2)
 endif
 
 end subroutine parse_variable_input
@@ -1103,6 +1180,8 @@ type(time_type),   optional, intent(out) :: last_time
 type(time_type),   optional, intent(out) :: origin_time
 type(time_type),   optional, intent(out) :: all_times(:)
 
+character(len=*), parameter   :: routine = 'get_time_information'
+
 integer :: ios, DimID, VarID, dimlen, i
 character(len=64) :: unitstring
 character(len=32) :: calendarstring
@@ -1118,14 +1197,14 @@ integer :: original_calendar_type
 !>@todo FIXME get the variable length from the varid and remove the need for the dimension name
 
 call nc_check(nf90_inq_dimid(ncid,dim_name,dimid=DimID), &
-       'get_time_information','cannot find "'//trim(dim_name)//'" dimension in '//trim(filename))
+       routine,'cannot find "'//trim(dim_name)//'" dimension in '//trim(filename))
 
 call nc_check(nf90_inquire_dimension(ncid, DimID, len=dimlen), &
-       'get_time_information', 'inquire_dimension '//trim(dim_name)//' from '//trim(filename))
+       routine, 'inquire_dimension '//trim(dim_name)//' from '//trim(filename))
 if (present(last_time_index)) last_time_index = dimlen
 
 call nc_check(nf90_inq_varid(ncid, var_name, VarID), &
-       'get_time_information', 'inq_varid '//trim(var_name)//' from '//trim(filename))
+       routine, 'inq_varid '//trim(var_name)//' from '//trim(filename))
 if (present(myvarid)) myvarid = VarID
 
 ! assume gregorian calendar unless there's a calendar attribute saying elsewise
@@ -1136,8 +1215,8 @@ if (index(calendarstring,'gregorian') == 0) then
    write(string1,*)'expecting '//trim(var_name)//' calendar of "gregorian"'
    write(string2,*)'got '//trim(calendarstring)
    write(string3,*)'from file "'//trim(filename)//'"'
-   call error_handler(E_MSG,'get_time_information:', string1, &
-             source, revision, revdate, text2=string2, text3=string3)
+   call error_handler(E_MSG,routine, string1, &
+             source, text2=string2, text3=string3)
 else
    ! coerce all forms of gregorian to the one DART supports
    ! 'gregorian_proleptic' needs to be changed, for example.
@@ -1164,7 +1243,7 @@ if (present(last_time) .or. present(origin_time) .or. present(all_times)) then
    !                      1234567890
 
    call nc_check(nf90_get_att(ncid, VarID, 'units', unitstring), &
-          'get_time_information', 'get_att '//trim(var_name)//' units '//trim(filename))
+          routine, 'get_att '//trim(var_name)//' units '//trim(filename))
 
    ! decode the start time of the time variable - expecting time to be coded
    ! as an offset to some base
@@ -1175,8 +1254,8 @@ if (present(last_time) .or. present(origin_time) .or. present(all_times)) then
          write(string1,*)'Unable to read time variable units. Error status was ',ios
          write(string2,*)'expected "seconds since YYYY-MM-DD HH:MM:SS"'
          write(string3,*)'was      "'//trim(unitstring)//'"'
-         call error_handler(E_ERR, 'get_time_information:', string1, &
-                source, revision, revdate, text2=string2, text3=string3)
+         call error_handler(E_ERR, routine, string1, &
+                source, text2=string2, text3=string3)
       endif
       offset_in_seconds = .true.
 
@@ -1186,8 +1265,8 @@ if (present(last_time) .or. present(origin_time) .or. present(all_times)) then
          write(string1,*)'Unable to read time variable units. Error status was ',ios
          write(string2,*)'expected "days since YYYY-MM-DD HH:MM:SS"'
          write(string3,*)'was      "'//trim(unitstring)//'"'
-         call error_handler(E_ERR, 'get_time_information:', string1, &
-                source, revision, revdate, text2=string2, text3=string3)
+         call error_handler(E_ERR, routine, string1, &
+                source, text2=string2, text3=string3)
       endif
       offset_in_seconds = .false.
 
@@ -1195,8 +1274,8 @@ if (present(last_time) .or. present(origin_time) .or. present(all_times)) then
       write(string1,*)'expecting time attribute units of "seconds since ..." -OR-'
       write(string2,*)'                              "days since ..."'
       write(string3,*)'got "'//trim(unitstring)//'"'
-      call error_handler(E_ERR,'get_time_information:', string1, &
-                source, revision, revdate, text2=string2, text3=string3)
+      call error_handler(E_ERR,routine, string1, &
+                source, text2=string2, text3=string3)
    endif
 
    base_time = set_date(year, month, day, hour, minute, second)
@@ -1212,7 +1291,7 @@ if (present(last_time) .or. present(origin_time) .or. present(all_times)) then
       allocate(these_times(dimlen))
 
       call nc_check(nf90_get_var( ncid, VarID, these_times), &
-             'get_time_information', 'get_var '//trim(var_name)//' from '//trim(filename))
+             routine, 'get_var '//trim(var_name)//' from '//trim(filename))
 
       if (present(last_time)) then
          time_offset = convert_to_time_offset(these_times(dimlen), offset_in_seconds)
@@ -1312,7 +1391,7 @@ if (dointerval) then
    if (ndays > 99) then
       write(string1, *) 'interval number of days is ', ndays
       call error_handler(E_ERR,'time_to_string:', 'interval days cannot be > 99', &
-                         source, revision, revdate, text2=string1)
+                         source, text2=string1)
    endif
    ihour = nsecs / 3600
    nsecs = nsecs - (ihour * 3600)
@@ -1334,37 +1413,6 @@ end function time_to_string
 
 !-----------------------------------------------------------------------
 !>
-!> gets the length of a netCDF dimension given the dimension name.
-!> This bundles the nf90_inq_dimid and nf90_inquire_dimension routines
-!> into a slightly easier-to-use function.
-!>
-!> @param dimlen the length of the netCDF dimension in question
-!> @param ncid the netCDF file handle
-!> @param dimension_name the character string of the dimension name
-!> @param filename the name of the netCDF file (for error message purposes)
-!>
-
-function get_dimension_length(ncid, dimension_name, filename) result(dimlen)
-
-integer                      :: dimlen
-integer,          intent(in) :: ncid
-character(len=*), intent(in) :: dimension_name
-character(len=*), intent(in) :: filename
-
-integer :: DimID
-
-write(string1,*)'inq_dimid '//trim(dimension_name)//' '//trim(filename)
-write(string2,*)'inquire_dimension '//trim(dimension_name)//' '//trim(filename)
-
-call nc_check(nf90_inq_dimid(ncid, trim(dimension_name), DimID), &
-              'get_dimension_length',string1)
-call nc_check(nf90_inquire_dimension(ncid, DimID, len=dimlen), &
-              'get_dimension_length', string2)
-
-end function get_dimension_length
-
-!-----------------------------------------------------------------------
-!>
 !> writes the time of the current state and (optionally) the time
 !> to be conveyed to ROMS to dictate the length of the forecast.
 !> This file is then used by scripts to modify the ROMS run.
@@ -1374,6 +1422,9 @@ end function get_dimension_length
 !>
 
 subroutine write_roms_time_information( model_time )
+
+character(len=*), parameter   :: routine = 'write_roms_time_information'
+
 type(time_type), intent(in) :: model_time
 
 integer :: iunit, day, second, ios, ncid
@@ -1382,13 +1433,12 @@ type(time_type) :: base_time, forecast_time
 
 base_time = model_time
 
-call nc_check( nf90_open(trim(roms_filename), NF90_NOWRITE, ncid), &
-                  'write_roms_time_information', 'open '//trim(roms_filename))
+call nc_check(nf90_open(trim(roms_filename), NF90_NOWRITE, ncid), &
+                  routine, 'open '//trim(roms_filename))
 
 call get_time_information(roms_filename, ncid, 'ocean_time', 'ocean_time', origin_time=base_time)
 
-call nc_check( nf90_close(ncid), &
-                 'write_roms_time_information', 'close '//trim(roms_filename))
+call nc_check(nf90_close(ncid), routine, 'close '//trim(roms_filename))
 
 forecast_time = model_time - base_time
 
@@ -1402,8 +1452,7 @@ write(iunit,'(A,1x,f25.5)', iostat=ios) 'DSTART ', dstart
 if (ios /= 0) then
    write(string1,*)'Unable to write new DSTART. Error status was ',ios
    write(string2,*)'dstart = ', dstart
-   call error_handler(E_ERR, 'write_roms_time_information:', string1, &
-          source, revision, revdate, text2=string2)
+   call error_handler(E_ERR, routine, string1, source, text2=string2)
 endif
 
 ! The next records are totally optional - not checking write status
@@ -1463,168 +1512,204 @@ integer,             intent(in)  :: dart_kind
 type(location_type), intent(out) :: location
 integer :: istatus ! 0 good, else bad
 
-integer  :: var_id, iloc, jloc, vloc
-integer  :: vert_type, my_kind
-real(r8) :: lon_fract, lat_fract, hgt_fract
-real(r8) :: lon_val, lat_val, hgt_val, tmp_hgt(2), hgt(4)
-real(r8), pointer :: mylon(:,:), mylat(:,:), mydep(:,:,:)
-logical, save :: first_time = .true.
-
-
+!integer  :: var_id, iloc, jloc, vloc
+!integer  :: vert_type, my_kind
+!real(r8) :: lon_fract, lat_fract, hgt_fract
+!real(r8) :: lon_val, lat_val, hgt_val, tmp_hgt(2), hgt(4)
+!real(r8), pointer :: mylon(:,:), mylat(:,:), mydep(:,:,:)
+!logical, save :: first_time = .true.
+!
+!
 write(string1,*)'Routine not finished.'
-call error_handler(E_ERR, 'get_location_from_ijk:', string1, &
-                      source, revision, revdate)
-
+call error_handler(E_ERR, 'get_location_from_ijk:', string1, source)
+!
 ! start out assuming bad istatus
-istatus  = 99
-
-var_id = get_varid_from_kind(domain_id, dart_kind)
-if (var_id < 0) then
-  istatus = 10 ! can not find variable id for dart_kind
-  return
-endif
-
-! check that we have a valid vertical location.
-! allow obs above the top rho point but below the
-! surface to be considered at the top rho point.
-! the commented out code is the test for excluding
-! obs above the top rho point in addition to obs
-! below the bottom rho point.
-!if (fkloc < 0.5 .or. fkloc > Ns_rho - 0.5) then
-if (fkloc < 0.5 .or. fkloc > Ns_rho) then
-  istatus = 11
-  location = set_location_missing()
-  return
-endif
-
-iloc = FLOOR(filoc)
-jloc = FLOOR(fjloc)
-vloc = FLOOR(fkloc)
-
-lon_fract = filoc - iloc
-lat_fract = fjloc - jloc
-hgt_fract = fkloc - vloc
-
-my_kind = get_kind_index(domain_id,var_id)
-if (my_kind==QTY_U_CURRENT_COMPONENT) then
-   write(string1,*)'Not interpolating ', get_name_for_quantity(my_kind), ' at the moment.'
-   write(string2,*)'Need to check that we are using the right grid for location interpolation'
-   call error_handler(E_ERR, 'get_location_from_ijk:', string1, &
-                      source, revision, revdate, text2=string2)
-   if (filoc < 1 .or. filoc > Nxi_u-1 .or. &
-       fjloc < 1 .or. fjloc > Neta_u-1 ) then
-     istatus = 12
-     location = set_location_missing()
-     return
-   endif
-   mylon => ULON
-   mylat => ULAT
-   mydep => UDEP
-elseif (my_kind==QTY_V_CURRENT_COMPONENT) then
-   write(string1,*)'Not interpolating ', get_name_for_quantity(my_kind), ' at the moment.'
-   write(string2,*)'Need to check that we are using the right grid for location interpolation'
-   call error_handler(E_ERR, 'get_location_from_ijk:', string1, &
-                      source, revision, revdate, text2=string2)
-   if (filoc < 1 .or. filoc > Nxi_v-1 .or. &
-       fjloc < 1 .or. fjloc > Neta_v-1 ) then
-     istatus = 13
-     location = set_location_missing()
-     return
-   endif
-   mylon => VLON
-   mylat => VLAT
-   mydep => VDEP
-else  ! Everything else is assumed to be on the rho points
-   if (filoc < 1 .or. filoc > Nxi_rho-1 .or. &
-       fjloc < 1 .or. fjloc > Neta_rho-1 ) then
-
-     write(*,*)
-     write(*,*)'filoc, Nxi_rho-1       = ',filoc, Nxi_rho-1
-     write(*,*)'fjloc, Neta_rho-1      = ',fjloc, Neta_rho-1
-     write(*,*)'fkloc, vloc, hgt_fract = ',fkloc,vloc,hgt_fract
-
-     write(logfileunit,*)
-     write(logfileunit,*)'filoc, Nxi_rho-1     = ',filoc, Nxi_rho-1
-     write(logfileunit,*)'fjloc, Neta_rho-1    = ',fjloc, Neta_rho-1
-     write(logfileunit,*)'fkloc,vloc,hgt_fract = ',fkloc,vloc,hgt_fract
-
-     istatus = 14
-     location = set_location_missing()
-     return
-   endif
-   mylon => TLON
-   mylat => TLAT
-   mydep => TDEP
-endif
-
-lon_val = (1.0-lon_fract)*(mylon(iloc,jloc)) + (lon_fract)*(mylon(iloc+1,jloc))
-lat_val = (1.0-lat_fract)*(mylat(iloc,jloc)) + (lat_fract)*(mylat(iloc  ,jloc+1))
-
-if( get_kind_index(domain_id,var_id) == QTY_SEA_SURFACE_HEIGHT ) then
-   hgt_val    = 0.0_r8
-   vert_type  = VERTISSURFACE
-else
-   if (fkloc > Ns_rho - 0.5) then
-      ! leave something in the log to remind us we're doing this and
-      ! make sure it's ok with everyone.
-      if (first_time) then
-         call error_handler(E_MSG, 'ROMS model_mod', &
-           'NOTE: Locations above the top Rho point are moved to that point')
-         first_time = .false.
-      endif
-      ! special case for obs at or closer to surface than top rho point
-      ! make them 100% at the top point
-      vloc = vloc - 1
-      hgt_fract = 1.0_r8
-   endif
-
-   ! fractional heights in the vertical for each corner of the horizontal box
-   hgt(1) = (1.0-hgt_fract)*(mydep(iloc  ,jloc,  vloc)) + hgt_fract*(mydep(iloc  ,jloc  ,vloc+1))
-   hgt(2) = (1.0-hgt_fract)*(mydep(iloc+1,jloc  ,vloc)) + hgt_fract*(mydep(iloc+1,jloc  ,vloc+1))
-   hgt(3) = (1.0-hgt_fract)*(mydep(iloc+1,jloc+1,vloc)) + hgt_fract*(mydep(iloc+1,jloc+1,vloc+1))
-   hgt(4) = (1.0-hgt_fract)*(mydep(iloc  ,jloc+1,vloc)) + hgt_fract*(mydep(iloc  ,jloc+1,vloc+1))
-
-   tmp_hgt(1) = (1.0-lon_fract)*hgt(1) + lon_fract*hgt(2)
-   tmp_hgt(2) = (1.0-lon_fract)*hgt(4) + lon_fract*hgt(3)
-
-   hgt_val   = (1.0-lat_fract)*tmp_hgt(1)+lat_fract*tmp_hgt(2)
-   vert_type = VERTISHEIGHT
-endif
-
-istatus  = 0
-location = set_location(lon_val, lat_val, hgt_val, vert_type)
-
-if (debug > 5) then
-   print*,' i,j,k', filoc, fjloc, fkloc
-
-   print*,' lon(i  ,j  ), lat(i  ,j  ) : (', mylon(iloc  ,jloc  ),',',mylat(iloc  ,jloc  ),')'
-   print*,' lon(i+1,j  ), lat(i+1,j  ) : (', mylon(iloc+1,jloc  ),',',mylat(iloc+1,jloc  ),')'
-   print*,' lon(i+1,j+1), lat(i+1,j+1) : (', mylon(iloc+1,jloc+1),',',mylat(iloc+1,jloc+1),')'
-   print*,' lon(i  ,j+1), lat(i  ,j+1) : (', mylon(iloc  ,jloc+1),',',mylon(iloc  ,jloc+1),')'
-   print*,' '
-   print*,' tmp_hgt(1)  = ', tmp_hgt(1)
-   print*,' tmp_hgt(2)  = ', tmp_hgt(2)
-   print*, ' '
-   print*,' lon_frac    = ', lon_fract
-   print*,' lat_frac    = ', lat_fract
-   print*,' hgt_frac    = ', hgt_fract
-   print*,' '
-   print*,' lon_val     = ', lon_val
-   print*,' lat_val     = ', lat_val
-   print*,' hgt_val     = ', hgt_val
-   print*,' '
-   print*,' WDEP(i  , j  , k  )', WDEP(iloc,   jloc  , vloc)
-   print*,' WDEP(i  , j+1, k  )', WDEP(iloc,   jloc+1, vloc)
-   print*,' WDEP(i+1, j+1, k  )', WDEP(iloc+1, jloc+1, vloc)
-   print*,' WDEP(i+1, j  , k  )', WDEP(iloc+1, jloc  , vloc)
-   print*,' '
-   print*,' WDEP(i  , j  , k+1)', WDEP(iloc,   jloc  , vloc+1)
-   print*,' WDEP(i  , j+1, k+1)', WDEP(iloc,   jloc+1, vloc+1)
-   print*,' WDEP(i+1, j+1, k+1)', WDEP(iloc+1, jloc+1, vloc+1)
-   print*,' WDEP(i+1, j  , k+1)', WDEP(iloc+1, jloc  , vloc+1)
-endif
-
+!istatus  = 99
+!
+!var_id = get_varid_from_kind(domain_id, dart_kind)
+!if (var_id < 0) then
+!  istatus = 10 ! can not find variable id for dart_kind
+!  return
+!endif
+!
+!! check that we have a valid vertical location.
+!! allow obs above the top rho point but below the
+!! surface to be considered at the top rho point.
+!! the commented out code is the test for excluding
+!! obs above the top rho point in addition to obs
+!! below the bottom rho point.
+!!if (fkloc < 0.5 .or. fkloc > Ns_rho - 0.5) then
+!if (fkloc < 0.5 .or. fkloc > Ns_rho) then
+!  istatus = 11
+!  location = set_location_missing()
+!  return
+!endif
+!
+!iloc = FLOOR(filoc)
+!jloc = FLOOR(fjloc)
+!vloc = FLOOR(fkloc)
+!
+!lon_fract = filoc - iloc
+!lat_fract = fjloc - jloc
+!hgt_fract = fkloc - vloc
+!
+!my_kind = get_kind_index(domain_id,var_id)
+!if (my_kind==QTY_U_CURRENT_COMPONENT) then
+!   write(string1,*)'Not interpolating ', get_name_for_quantity(my_kind), ' at the moment.'
+!   write(string2,*)'Need to check that we are using the right grid for location interpolation'
+!   call error_handler(E_ERR, 'get_location_from_ijk:', string1, &
+!                      source, text2=string2)
+!   if (filoc < 1 .or. filoc > Nxi_u-1 .or. &
+!       fjloc < 1 .or. fjloc > Neta_u-1 ) then
+!     istatus = 12
+!     location = set_location_missing()
+!     return
+!   endif
+!   mylon => ULON
+!   mylat => ULAT
+!   mydep => UDEP
+!elseif (my_kind==QTY_V_CURRENT_COMPONENT) then
+!   write(string1,*)'Not interpolating ', get_name_for_quantity(my_kind), ' at the moment.'
+!   write(string2,*)'Need to check that we are using the right grid for location interpolation'
+!   call error_handler(E_ERR, 'get_location_from_ijk:', string1, &
+!                      source, text2=string2)
+!   if (filoc < 1 .or. filoc > Nxi_v-1 .or. &
+!       fjloc < 1 .or. fjloc > Neta_v-1 ) then
+!     istatus = 13
+!     location = set_location_missing()
+!     return
+!   endif
+!   mylon => VLON
+!   mylat => VLAT
+!   mydep => VDEP
+!else  ! Everything else is assumed to be on the rho points
+!   if (filoc < 1 .or. filoc > Nxi_rho-1 .or. &
+!       fjloc < 1 .or. fjloc > Neta_rho-1 ) then
+!
+!     write(*,*)
+!     write(*,*)'filoc, Nxi_rho-1       = ',filoc, Nxi_rho-1
+!     write(*,*)'fjloc, Neta_rho-1      = ',fjloc, Neta_rho-1
+!     write(*,*)'fkloc, vloc, hgt_fract = ',fkloc,vloc,hgt_fract
+!
+!     write(logfileunit,*)
+!     write(logfileunit,*)'filoc, Nxi_rho-1     = ',filoc, Nxi_rho-1
+!     write(logfileunit,*)'fjloc, Neta_rho-1    = ',fjloc, Neta_rho-1
+!     write(logfileunit,*)'fkloc,vloc,hgt_fract = ',fkloc,vloc,hgt_fract
+!
+!     istatus = 14
+!     location = set_location_missing()
+!     return
+!   endif
+!   mylon => TLON
+!   mylat => TLAT
+!   mydep => TDEP
+!endif
+!
+!lon_val = (1.0-lon_fract)*(mylon(iloc,jloc)) + (lon_fract)*(mylon(iloc+1,jloc))
+!lat_val = (1.0-lat_fract)*(mylat(iloc,jloc)) + (lat_fract)*(mylat(iloc  ,jloc+1))
+!
+!if( get_kind_index(domain_id,var_id) == QTY_SEA_SURFACE_HEIGHT ) then
+!   hgt_val    = 0.0_r8
+!   vert_type  = VERTISSURFACE
+!else
+!   if (fkloc > Ns_rho - 0.5) then
+!      ! leave something in the log to remind us we're doing this and
+!      ! make sure it's ok with everyone.
+!      if (first_time) then
+!         call error_handler(E_MSG, 'ROMS model_mod', &
+!           'NOTE: Locations above the top Rho point are moved to that point')
+!         first_time = .false.
+!      endif
+!      ! special case for obs at or closer to surface than top rho point
+!      ! make them 100% at the top point
+!      vloc = vloc - 1
+!      hgt_fract = 1.0_r8
+!   endif
+!
+!   ! fractional heights in the vertical for each corner of the horizontal box
+!   hgt(1) = (1.0-hgt_fract)*(mydep(iloc  ,jloc,  vloc)) + hgt_fract*(mydep(iloc  ,jloc  ,vloc+1))
+!   hgt(2) = (1.0-hgt_fract)*(mydep(iloc+1,jloc  ,vloc)) + hgt_fract*(mydep(iloc+1,jloc  ,vloc+1))
+!   hgt(3) = (1.0-hgt_fract)*(mydep(iloc+1,jloc+1,vloc)) + hgt_fract*(mydep(iloc+1,jloc+1,vloc+1))
+!   hgt(4) = (1.0-hgt_fract)*(mydep(iloc  ,jloc+1,vloc)) + hgt_fract*(mydep(iloc  ,jloc+1,vloc+1))
+!
+!   tmp_hgt(1) = (1.0-lon_fract)*hgt(1) + lon_fract*hgt(2)
+!   tmp_hgt(2) = (1.0-lon_fract)*hgt(4) + lon_fract*hgt(3)
+!
+!   hgt_val   = (1.0-lat_fract)*tmp_hgt(1)+lat_fract*tmp_hgt(2)
+!   vert_type = VERTISHEIGHT
+!endif
+!
+!istatus  = 0
+!location = set_location(lon_val, lat_val, hgt_val, vert_type)
+!
+!if (debug > 5) then
+!   print*,' i,j,k', filoc, fjloc, fkloc
+!
+!   print*,' lon(i  ,j  ), lat(i  ,j  ) : (', mylon(iloc  ,jloc  ),',',mylat(iloc  ,jloc  ),')'
+!   print*,' lon(i+1,j  ), lat(i+1,j  ) : (', mylon(iloc+1,jloc  ),',',mylat(iloc+1,jloc  ),')'
+!   print*,' lon(i+1,j+1), lat(i+1,j+1) : (', mylon(iloc+1,jloc+1),',',mylat(iloc+1,jloc+1),')'
+!   print*,' lon(i  ,j+1), lat(i  ,j+1) : (', mylon(iloc  ,jloc+1),',',mylon(iloc  ,jloc+1),')'
+!   print*,' '
+!   print*,' tmp_hgt(1)  = ', tmp_hgt(1)
+!   print*,' tmp_hgt(2)  = ', tmp_hgt(2)
+!   print*, ' '
+!   print*,' lon_frac    = ', lon_fract
+!   print*,' lat_frac    = ', lat_fract
+!   print*,' hgt_frac    = ', hgt_fract
+!   print*,' '
+!   print*,' lon_val     = ', lon_val
+!   print*,' lat_val     = ', lat_val
+!   print*,' hgt_val     = ', hgt_val
+!   print*,' '
+!   print*,' WDEP(i  , j  , k  )', WDEP(iloc,   jloc  , vloc)
+!   print*,' WDEP(i  , j+1, k  )', WDEP(iloc,   jloc+1, vloc)
+!   print*,' WDEP(i+1, j+1, k  )', WDEP(iloc+1, jloc+1, vloc)
+!   print*,' WDEP(i+1, j  , k  )', WDEP(iloc+1, jloc  , vloc)
+!   print*,' '
+!   print*,' WDEP(i  , j  , k+1)', WDEP(iloc,   jloc  , vloc+1)
+!   print*,' WDEP(i  , j+1, k+1)', WDEP(iloc,   jloc+1, vloc+1)
+!   print*,' WDEP(i+1, j+1, k+1)', WDEP(iloc+1, jloc+1, vloc+1)
+!   print*,' WDEP(i+1, j  , k+1)', WDEP(iloc+1, jloc  , vloc+1)
+!endif
+!
 end function get_location_from_ijk
+
+
+!-----------------------------------------------------------------------
+! Initialize the quad interpolation tools
+
+subroutine setup_interpolation
+
+
+
+
+end subroutine setup_interpolation
+
+!-----------------------------------------------------------------------
+!>
+!> Does any shutdown and clean-up needed for model.
+!>
+
+subroutine end_model()
+
+! good style ... perhaps you could deallocate stuff (from static_init_model?).
+! deallocate(state_loc)
+
+if (allocated(ULAT)) deallocate(ULAT)
+if (allocated(ULON)) deallocate(ULON)
+if (allocated(UDEP)) deallocate(UDEP)
+
+if (allocated(VLAT)) deallocate(VLAT)
+if (allocated(VLON)) deallocate(VLON)
+if (allocated(VDEP)) deallocate(VDEP)
+
+if (allocated(TLAT)) deallocate(TLAT)
+if (allocated(TLON)) deallocate(TLON)
+if (allocated(TDEP)) deallocate(TDEP)
+
+if (allocated(WDEP)) deallocate(WDEP)
+
+end subroutine end_model
 
 
 !===================================================================
