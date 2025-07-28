@@ -210,8 +210,7 @@ real(r8), allocatable :: ULAT(:,:), ULON(:,:), UDEP(:,:,:), &
                          TLAT(:,:), TLON(:,:), TDEP(:,:,:), &
                          VLAT(:,:), VLON(:,:), VDEP(:,:,:)
 logical, allocatable  :: TMSK(:,:), UMSK(:,:), VMSK(:,:)
-real(r8), allocatable :: WDEP(:,:,:), basin_depth(:,:)
-real(r8), allocatable :: h(:,:), Cr(:), Cw(:), sw(:), sr(:)  
+real(r8), allocatable :: h(:,:), Cr(:), sr(:)  
 real(r8)              :: hc ! critical depth (m)
 integer               :: Vt ! transformation formula from ROMS
 integer               :: ix, iy, ik
@@ -1028,8 +1027,7 @@ allocate(ULAT(Nu, Ny), ULON(Nu, Ny), UMSK(Nu, Ny), UDEP(Nu, Ny, Nz))
 allocate(VLAT(Nx, Nv), VLON(Nx, Nv), VMSK(Nx, Nv), VDEP(Nx, Nv, Nz))
 allocate(TLAT(Nx, Ny), TLON(Nx, Ny), TMSK(Nx, Ny), TDEP(Nx, Ny, Nz))
 
-allocate(h(Nx,Ny), Cr(Nz), sr(Nz), Cw(Nw), sw(Nw), WDEP(Nx, Ny, Nw))
-allocate(basin_depth(Nx, Ny))
+allocate(h(Nx,Ny), Cr(Nz), sr(Nz))
 
 ! s-coordinates at RHO-points
 !do ik = 1, Nz
@@ -1048,8 +1046,6 @@ call nc_get_variable(ncid, 'h'         , h , routine)
 call nc_get_variable(ncid, 'hc'        , hc, routine)
 call nc_get_variable(ncid, 'Cs_r'      , Cr, routine)
 call nc_get_variable(ncid, 's_rho'     , sr, routine)
-call nc_get_variable(ncid, 'Cs_w'      , Cw, routine)
-call nc_get_variable(ncid, 's_w'       , sw, routine)
 call nc_get_variable(ncid, 'Vtransform', Vt, routine)
 
 ! Check whether physical depth data exist in the restart file
@@ -1059,12 +1055,9 @@ if (nc_variable_exists(ncid, 'z_rho')) then
    call nc_get_variable(ncid, 'z_rho', TDEP, routine)
    call nc_get_variable(ncid, 'z_u'  , UDEP, routine)
    call nc_get_variable(ncid, 'z_v'  , VDEP, routine)
-   call nc_get_variable(ncid, 'z_w'  , WDEP, routine)
    TDEP = -TDEP
    UDEP = -UDEP
    VDEP = -VDEP
-   
-   basin_depth = -WDEP(:, :, 1)
 else
    
    ! Need to compute the physical depth
@@ -1083,7 +1076,6 @@ else
    do ix = 1, Nx
       do iy = 1, Ny 
          call compute_physical_depth(h(ix, iy), zeta(ix, iy), TDEP(ix, iy, :))
-         call ocean_floor(h(ix, iy), zeta(ix, iy), basin_depth(ix, iy))
       enddo
    enddo
 
@@ -1185,40 +1177,6 @@ enddo
 d = -d
 
 end subroutine compute_physical_depth
-
-!-----------------------------------------------------------------------
-! Use the depth at W points to find the basin depth
-subroutine ocean_floor(b, z, d)
-
-character(len=*), parameter :: routine = 'oecean_floor'
-
-real(r8), intent(in)  :: b, z ! bathymetry and free surface
-real(r8), intent(out) :: d    ! ocean_floor
-real(r8)              :: z0
-
-if (debug > 100) then
-   do ik = 1, Nz
-      write(*, '(A, i3, A, f10.7, A, f10.7)') 'Layer: ', ik, &
-               ', S_W: ', sw(ik), ' .. ', sw(ik+1)
-   enddo
-endif
-
-! Compute z_w at the bottom of the ocean 
-ik = 1
-if (Vt == 1) then ! Original transformation
-   z0 = hc*(sw(ik) - Cw(ik)) + Cw(ik)*b
-   d  = z0 + z * (1.0_r8 + z0/b)
-elseif (Vt == 2) then ! New transformation
-   z0 = (hc*sw(ik) + Cw(ik)*b)/(hc+b)
-   d  = z + z0*(z+b)
-else
-   string1 = 'Unsupported Vtransform'
-   call error_handler(E_ERR, routine, string1)
-endif
-
-d = -d
-
-end subroutine ocean_floor
 
 !-----------------------------------------------------------------------
 ! Using z_rho, compute z_u and z_v
@@ -1351,8 +1309,7 @@ type(ensemble_type), optional, intent(in)    :: ens_handle
 
 character(len=*), parameter :: routine = 'get_close_state'
 
-integer  :: ii, i, j, k
-real(r8) :: lon_lat_vert(Nd)
+integer  :: ii
 
 call loc_get_close_state(gc, base_loc, base_type, locs, loc_qtys, loc_indx, &
                             num_close, close_ind, dist, ens_handle)
@@ -1363,11 +1320,6 @@ if (.not. present(dist)) return
 ! so they are not updated by obs
 do ii = 1, num_close
   if(loc_qtys(close_ind(ii)) == QTY_DRY_LAND) dist(ii) = 1.0e9_r8
- 
-  lon_lat_vert = get_location(locs(close_ind(ii)))
-  call get_model_variable_indices(loc_indx(ii), i, j, k)
-  
-  if (below_sea_floor(i, j, lon_lat_vert(Nd))) dist(ii) = 1.0e9_r8 
 enddo
 
 end subroutine get_close_state
@@ -2126,20 +2078,6 @@ endif
 end function point_on_land
 
 !-----------------------------------------------------------
-! Figure out whether a point is below sea floor
-
-function below_sea_floor(ilon, ilat, depth)
-
-integer  :: ilon, ilat
-real(r8) :: depth
-logical  :: below_sea_floor 
-
-below_sea_floor = .false.
-if (depth > basin_depth(ilon, ilat)) below_sea_floor = .true. 
-
-end function below_sea_floor 
-
-!-----------------------------------------------------------
 ! Figure out whether any part of the quad is on land 
 
 subroutine quad_on_land(qty, lons, lats, status)
@@ -2285,8 +2223,6 @@ if (allocated(VDEP)) deallocate(VDEP)
 if (allocated(TLAT)) deallocate(TLAT)
 if (allocated(TLON)) deallocate(TLON)
 if (allocated(TDEP)) deallocate(TDEP)
-
-if (allocated(WDEP)) deallocate(WDEP)
 
 if (allocated(TMSK)) deallocate(TMSK)
 if (allocated(UMSK)) deallocate(UMSK)
