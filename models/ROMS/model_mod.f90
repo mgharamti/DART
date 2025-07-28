@@ -517,6 +517,7 @@ call quad_lon_lat_evaluate(interp, lon_lat_vrt(1), lon_lat_vrt(2), &
                            expected_obs, qstatus)
 
 if(qty == QTY_TEMPERATURE) then
+  print *, 'Salinity Interpolation:'
   ! Set the potential temperature ensemble values 
   expected_T = expected_obs
 
@@ -1263,7 +1264,10 @@ real(r8) :: lev_frc(ens_size)     ! Fractional distances between bot and top
 real(r8) :: Zvals(Nz, ens_size)   ! All ensemble values to be interpolated
 real(r8) :: tops, bots            ! Ensemble level values
 real(r8) :: bath                  ! Bathymetry at a single point
+
 integer(i8) :: dartidx     
+
+levels = 0
 
 do i = 1, Nc
    bath = h(lon_c(i), lat_c(i))
@@ -1273,27 +1277,34 @@ do i = 1, Nc
    do ie = 1, ens_size
       call compute_physical_depth(bath, SSHcorn(i, ie), depths) 
       call depth_bounds(lon_lat_vrt(3), depths, lev(ie, 1), lev(ie, 2), lev_frc(ie), dstatus)
-
+     
       if (dstatus /= 0) return
    enddo
 
    ! Now, get the state. First, find unique vertical levels 
-   ! used in the ensemble of vertical interpolation 
+   ! used in the ensemble of vertical interpolation
+   ! This is to avoid computing/calling the state for different 
+   ! members at the same level. So, we only get the state 
+   ! ensemble at each of the interpolating levels once!
    call unique_levels(lev(:, 1), lev(:, 2), ens_size, levels, Nl)
 
+   ! Get the state at all requested depths
    do il = 1, Nl
       lz = levels(il)
       dartidx      = get_dart_vector_index(lon_c(i), lat_c(i), lz, domid, varid)
       Zvals(lz, :) = get_state(dartidx, state_handle)
 
-      !print *, 'il: ', il, 'lvl: ', lz, 'DART indx: ', dartidx, 'Zvals: ', Zvals(lz, :)
+      !write(*, '(A, i3, A, i3, A, i12, A, i2, A, 3F10.6)') & 
+      !         '  il: ', il, ', lvl: ', lz, ', DART indx: ', dartidx, ', Zvals(', lz, ', :): ', Zvals(lz, :)
    enddo
+
+   ! Do the vertical interpolation using the 
+   ! state at all depth array (i.e., Zvals)
    do ie = 1, ens_size
-      tops = Zvals(lev(ie, 1), ie)
-      bots = Zvals(lev(ie, 2), ie)
+      bots = Zvals(lev(ie, 1), ie)
+      tops = Zvals(lev(ie, 2), ie)
 
       corners(i, ie) = bots + lev_frc(ie)*(tops-bots)
-      !print *, 'i: ', i, 'corner: ', corners(i, ie)
    enddo
 enddo
 
@@ -2231,6 +2242,8 @@ subroutine unique_levels(val1, val2, N, val_un, N_un)
   integer :: i, j
   logical :: is_new
   integer :: count
+
+  val_un = 0
 
   ! Combine inputs
   val(1:N) = val1

@@ -11,6 +11,7 @@
 #    all these variables will be updated INTERNALLY IN DART
 #    only variables marked 'UPDATE' will be modified for ROMS.
 # 'roms_input.nc' is a restart | 'roms_hist.nc' is a history file
+# obs within +/- 0.5*assimilation_period_days will be assimilated
 &model_nml
    roms_filename               = 'roms_hist_z.nc' 
    assimilation_period_days    = 8
@@ -28,7 +29,7 @@
    async                    = 0
    adv_ens_command          = "DART_trying_to_advance_ROMS_not_supported"
    ens_size                 = 3
-   obs_sequence_in_name     = "obs_seq1.out"
+   obs_sequence_in_name     = "obs_seq2.out"
    obs_sequence_out_name    = "obs_seq.final"
    init_time_days           = -1
    init_time_seconds        = -1
@@ -48,14 +49,14 @@
    trace_execution          = .true.
    silence                  = .false.
 
-   input_state_file_list    = "input_ensemble.txt"
-   output_state_file_list   = "output_ensemble.txt"
+   input_state_file_list    = "in_ens.txt"
+   output_state_file_list   = "out_ens.txt"
    stages_to_write          = 'preassim', 'output'
    output_members           = .true.
    output_mean              = .true.
    output_sd                = .true.
    write_all_stages_at_end  = .false.
-   num_output_state_members = 0
+   num_output_state_members = 3
 
    inf_flavor                  = 0,                       0
    inf_initial_from_restart    = .false.,                 .false.
@@ -126,6 +127,7 @@
    output_localization_diagnostics = .false.
    localization_diagnostics_file   = 'localization_diagnostics'
    print_every_nth_obs             = 1000
+   distribute_mean                 = .true.
   /
 
 &cov_cutoff_nml
@@ -189,31 +191,24 @@
                        "blended satellite SST (temperature)",    "SATELLITE_BLENDED_SST"
 
 &obs_kind_nml
-   evaluate_these_obs_types   =          'TEMPERATURE'
-   assimilate_these_obs_types =          'SATELLITE_SSH',
-                                         'SATELLITE_SSS',
-                                         'XBT_TEMPERATURE',
-                                         'CTD_TEMPERATURE',
-                                         'CTD_SALINITY',
-                                         'ARGO_TEMPERATURE',
-                                         'ARGO_SALINITY',
-                                         'GLIDER_TEMPERATURE',
-                                         'GLIDER_SALINITY',
-                                         'SATELLITE_BLENDED_SST',
-                                         'SATELLITE_MICROWAVE_SST',
-                                         'SATELLITE_INFRARED_SST'
+   evaluate_these_obs_types   = ''
+   assimilate_these_obs_types = 'SATELLITE_SSH',
+                                'SATELLITE_SSS',
+                                'XBT_TEMPERATURE',
+                                'CTD_TEMPERATURE',
+                                'CTD_SALINITY',
+                                'ARGO_TEMPERATURE',
+                                'ARGO_SALINITY',
+                                'GLIDER_TEMPERATURE',
+                                'GLIDER_SALINITY',
+                                'SATELLITE_BLENDED_SST',
+                                'SATELLITE_MICROWAVE_SST',
+                                'SATELLITE_INFRARED_SST'
   /
 
 
 &location_nml
    horiz_dist_only             = .false.
-   vert_normalization_pressure = 100000.0
-   vert_normalization_height   = 10000.0
-   vert_normalization_level    = 20.0
-   approximate_distance        = .false.
-   nlon                        = 71
-   nlat                        = 36
-   output_box_info             = .true.
   /
 
 
