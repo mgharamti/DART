@@ -12,11 +12,11 @@
 #    only variables marked 'UPDATE' will be modified for ROMS.
 # 'roms_input.nc' is a restart | 'roms_hist.nc' is a history file
 &model_nml
-   roms_filename               = 'roms_hist.nc' 
+   roms_filename               = 'roms_hist_z.nc' 
    assimilation_period_days    = 8
    assimilation_period_seconds = 0
    vert_localization_coord     = 3
-   debug                       = 1
+   debug                       = 0
    variables                   = 'temp', 'QTY_TEMPERATURE'        , 'NA' , 'NA', 'update'
                                  'salt', 'QTY_SALINITY'           , '0.0', 'NA', 'update'
                                  'u'   , 'QTY_U_CURRENT_COMPONENT', 'NA' , 'NA', 'update'
@@ -28,7 +28,7 @@
    async                    = 0
    adv_ens_command          = "DART_trying_to_advance_ROMS_not_supported"
    ens_size                 = 3
-   obs_sequence_in_name     = "obs_seq.out"
+   obs_sequence_in_name     = "obs_seq1.out"
    obs_sequence_out_name    = "obs_seq.final"
    init_time_days           = -1
    init_time_seconds        = -1
@@ -48,8 +48,8 @@
    trace_execution          = .true.
    silence                  = .false.
 
-   input_state_file_list    = "restart_files.txt"
-   output_state_file_list   = "restart_files.txt"
+   input_state_file_list    = "input_ensemble.txt"
+   output_state_file_list   = "output_ensemble.txt"
    stages_to_write          = 'preassim', 'output'
    output_members           = .true.
    output_mean              = .true.
@@ -85,6 +85,9 @@
    qceff_table_filename = ''
    /
 
+&quad_interpolate_nml
+   /
+
 &perfect_model_obs_nml
    read_input_state_from_file = .true.
    single_file_in             = .false.
@@ -118,7 +121,7 @@
    cutoff                          = 0.02
    sort_obs_inc                    = .false.
    spread_restoration              = .false.
-   sampling_error_correction       = .true.
+   sampling_error_correction       = .false.
    adaptive_localization_threshold = -1
    output_localization_diagnostics = .false.
    localization_diagnostics_file   = 'localization_diagnostics'
@@ -188,18 +191,6 @@
 &obs_kind_nml
    evaluate_these_obs_types   =          'TEMPERATURE'
    assimilate_these_obs_types =          'SATELLITE_SSH',
-                                         'SATELLITE_SSS',
-                                         'XBT_TEMPERATURE',
-                                         'CTD_TEMPERATURE',
-                                         'CTD_SALINITY',
-                                         'ARGO_TEMPERATURE',
-                                         'ARGO_SALINITY',
-                                         'GLIDER_TEMPERATURE',
-                                         'GLIDER_SALINITY',
-                                         'SATELLITE_BLENDED_SST',
-                                         'SATELLITE_MICROWAVE_SST',
-                                         'SATELLITE_INFRARED_SST'
-   use_precomputed_FOs_these_obs_types = 'SATELLITE_SSH',
                                          'SATELLITE_SSS',
                                          'XBT_TEMPERATURE',
                                          'CTD_TEMPERATURE',
@@ -331,33 +322,6 @@
 &forward_operator_nml
 /
 
-   kind_of_interest      = 'QTY_U_CURRENT_COMPONENT'
-                            QTY_SEA_SURFACE_HEIGHT
-   x_ind                 = 4210 #TEMP (229, 36.6667, 4.xx)
-   x_ind                 = 367400 # SSH (229 36.6667)
-   x_ind                 = 93530
-   x_ind                 = 124330
-
-
-&model_mod_check_nml
-   input_state_files     = 'roms_hist.nc'
-   output_state_files    = 'mmc_output.nc'
-   test1thru             = 0
-   run_tests             = 1, 2, 3, 4
-   x_ind                 = 160920480
-   loc_of_interest       = 100.0, -15.0, 10.0
-   quantity_of_interest  = 'QTY_U_CURRENT_COMPONENT'
-   interp_test_dlon      = 0.1
-   interp_test_dlat      = 0.1
-   interp_test_dvert     = 5.0
-   interp_test_lonrange  = 205.0,  226.0
-   interp_test_latrange  =  30.0,   47.0
-   interp_test_vertrange =  0.0,    10.0
-   interp_test_vertcoord = 'VERTISHEIGHT'
-   verbose               = .false.
-  /
-
-
 &test_grid_nml
    x_ind                 = 160920480
    loc_of_interest       = 16.0500, 35.1000, 2.5
@@ -374,4 +338,24 @@
    restart_out_file_name = 'roms_output'
    verbose               = .true.
   /
+
+
+&model_mod_check_nml
+   input_state_files     = 'roms_hist_z.nc'
+   output_state_files    = 'mmc_output.nc'
+   test1thru             = 0 
+   run_tests             = 1, 3, 4, 7
+   x_ind                 = 160920480
+   loc_of_interest       = 100.0, -10.0, 2500.0
+   quantity_of_interest  = 'QTY_TEMPERATURE'
+   interp_test_dlon      = 0.1 
+   interp_test_dlat      = 0.1 
+   interp_test_dvert     = 1.0 
+   interp_test_lonrange  = 105.0,  110.0
+   interp_test_latrange  =   5.0,   10.0
+   interp_test_vertrange =   0.0,   50.0
+   interp_test_vertcoord = 'VERTISHEIGHT'
+   verbose               = .true.
+  /
+
 

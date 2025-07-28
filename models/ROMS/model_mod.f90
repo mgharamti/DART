@@ -45,9 +45,11 @@ use time_manager_mod, only : time_type, set_time, set_date, get_date, get_time, 
 
 use     location_mod, only : location_type, set_location, get_location,         &
                              write_location, set_location_missing,              &
-                             get_close_obs, get_close_state,                    &
+                             loc_get_close_obs => get_close_obs,                &
+                             loc_get_close_state => get_close_state,            &
                              convert_vertical_obs, convert_vertical_state,      &
-                             VERTISHEIGHT, VERTISSURFACE
+                             VERTISHEIGHT, VERTISSURFACE, query_location,       &
+                             set_vertical, get_close_type
 
 use    utilities_mod, only : register_module, error_handler, do_nml_term,       &
                              E_ERR, E_WARN, E_MSG, logfileunit, nmlfileunit,    &
@@ -57,6 +59,12 @@ use    utilities_mod, only : register_module, error_handler, do_nml_term,       
                              file_to_text, do_output, close_file,               &
                              string_to_real, string_to_logical
 
+use quad_utils_mod,   only : quad_interp_handle, set_quad_coords,               &
+                             init_quad_interp, finalize_quad_interp,            &
+                             quad_lon_lat_locate, quad_lon_lat_evaluate,        &
+                             GRID_QUAD_FULLY_IRREGULAR, QUAD_LOCATED_LON_EDGES, &
+                             QUAD_LOCATED_CELL_CENTERS, QUAD_LOCATED_LAT_EDGES
+
 use     obs_kind_mod, only : QTY_TEMPERATURE,           &
                              QTY_SALINITY,              &
                              QTY_U_CURRENT_COMPONENT,   &
@@ -64,6 +72,7 @@ use     obs_kind_mod, only : QTY_TEMPERATURE,           &
                              QTY_SEA_SURFACE_HEIGHT,    &
                              QTY_SEA_SURFACE_PRESSURE,  &
                              QTY_POTENTIAL_TEMPERATURE, &
+                             QTY_DRY_LAND,              &
                              get_index_for_quantity,    &
                              get_name_for_quantity
 
@@ -73,11 +82,12 @@ use        random_seq_mod, only : random_seq_type, init_random_seq, random_gauss
 
 use  ensemble_manager_mod, only : ensemble_type
 
-use distributed_state_mod, only : get_state
+use distributed_state_mod, only : get_state, get_state_array
 
 use   state_structure_mod, only : add_domain, get_model_variable_indices, &
-                                  get_domain_size, get_varid_from_kind, &
-                                  state_structure_info, get_kind_index
+                                  get_domain_size, get_varid_from_kind,   &
+                                  state_structure_info, get_kind_index,   &
+                                  get_dart_vector_index, get_num_dims
 
 use netcdf_utilities_mod,  only : nc_add_global_attribute, nc_synchronize_file,        &    
                                   nc_add_global_creation_time, nc_begin_define_mode,   &
@@ -161,13 +171,13 @@ namelist /model_nml/            &
    debug,                       &
    variables
 
-integer :: nfields   ! This is the number of variables in the DART state vector.
-integer :: domain_id ! global variable for state_structure_mod routines
+integer :: nfields ! This is the number of variables in the DART state vector.
+integer :: domid   ! global variable for state_structure_mod routines
 
-!> Everything needed to describe a variable. Basically all the metadata from
-!> a netCDF file is stored here as well as all the information about where
-!> the variable is stored in the DART state vector.
-!>
+type(quad_interp_handle) :: interp_t_grid, &
+                            interp_u_grid, &
+                            interp_v_grid
+
 
 ! Grid parameters - the values will be read from a
 ! standard ROMS namelist and filled in here.
@@ -184,28 +194,32 @@ integer :: Neta_v
 integer :: Ns_rho
 integer :: Ns_w
 
-real(r8) :: Zmax = 5000.0_r8
+integer  :: Nc = 4
+integer  :: Nd = 3
+real(r8) :: Zm = -5000.0_r8
 
-!>@todo FIXME ... nancy suggested creating pointers for each of these so
-!    we could simply use the myvarid as the index in the pointer ...
+! model_interpolate failure codes
+integer, parameter :: QUAD_LOCATE_FAILED   = 13
+integer, parameter :: QUAD_EVALUATE_FAILED = 21
+integer, parameter :: SSH_QUAD_EVAL_FAILED = 34
+integer, parameter :: QUAD_MAYBE_ON_LAND   = 55
+integer, parameter :: OBS_TOO_DEEP         = 89
 
+! ROMS related grid variables
 real(r8), allocatable :: ULAT(:,:), ULON(:,:), UDEP(:,:,:), &
                          TLAT(:,:), TLON(:,:), TDEP(:,:,:), &
-                         VLAT(:,:), VLON(:,:), VDEP(:,:,:), &
-                                               WDEP(:,:,:)
+                         VLAT(:,:), VLON(:,:), VDEP(:,:,:)
 logical, allocatable  :: TMSK(:,:), UMSK(:,:), VMSK(:,:)
-
-!>@todo FIXME : JPH may not need the WDEP array
+real(r8), allocatable :: WDEP(:,:,:), basin_depth(:,:)
+real(r8), allocatable :: h(:,:), Cr(:), Cw(:), sw(:), sr(:)  
+real(r8)              :: hc ! critical depth (m)
+integer               :: Vt ! transformation formula from ROMS
+integer               :: ix, iy, ik
 
 type(time_type) :: model_timestep
-
-integer :: model_size    ! the state vector length
-
-!> Reshapes a part of the DART vector back to the original variable shape.
-!>@todo FIXME Replaces the DART MISSING value with the original _FillValue value.
+integer         :: model_size    ! the state vector length
 
 contains
-
 
 !-----------------------------------------------------------------------
 ! All the REQUIRED interfaces come first - by convention.
@@ -278,14 +292,14 @@ call get_grid()
 ! parse_variable_input() fills var_names, kind_list, clamp_vals, update_list
 call parse_variable_input(variables, nfields)
 
-domain_id = add_domain(roms_filename, nfields, &
-                    var_names, kind_list, clamp_vals, update_list )
+domid = add_domain(roms_filename, nfields, &
+                   var_names, kind_list, clamp_vals, update_list )
 
-if (debug > 0) call state_structure_info(domain_id)
+if (debug > 0) call state_structure_info(domid)
 
 call nc_close_file(ncid, routine)
 
-model_size = get_domain_size(domain_id)
+model_size = get_domain_size(domid)
 
 call setup_interpolation()
 
@@ -328,28 +342,28 @@ end function get_model_size
 !> @param var_type the DART KIND at that index
 !>
 
-subroutine get_state_meta_data(index_in, location, var_type)
+subroutine get_state_meta_data(index_in, location, qty)
 
 integer(i8),         intent(in)  :: index_in
 type(location_type), intent(out) :: location
-integer, optional,   intent(out) :: var_type
+integer, optional,   intent(out) :: qty
 
 ! Local variables
 
-integer  :: iloc, vloc, jloc
+integer  :: iloc, jloc, kloc
 integer  :: myvarid, myqty
 
 if ( .not. module_initialized ) call static_init_model
 
-call get_model_variable_indices(index_in, iloc, jloc, vloc, var_id=myvarid)
+call get_model_variable_indices(index_in, iloc, jloc, kloc, var_id=myvarid)
 
-myqty = get_kind_index(domain_id, myvarid)
+myqty = get_kind_index(domid, myvarid)
 
 if (myqty == QTY_U_CURRENT_COMPONENT) then
-   location = set_location(ULON(iloc,jloc), ULAT(iloc,jloc), UDEP(iloc,jloc,vloc), VERTISHEIGHT)
+   location = set_location(ULON(iloc,jloc), ULAT(iloc,jloc), UDEP(iloc,jloc,kloc), VERTISHEIGHT)
 
 elseif (myqty == QTY_V_CURRENT_COMPONENT) then
-   location = set_location(VLON(iloc,jloc), VLAT(iloc,jloc), VDEP(iloc,jloc,vloc), VERTISHEIGHT)
+   location = set_location(VLON(iloc,jloc), VLAT(iloc,jloc), VDEP(iloc,jloc,kloc), VERTISHEIGHT)
 
 elseif (myqty == QTY_SEA_SURFACE_HEIGHT) then
    ! TODO: So, because we are also doing waves and tides SSH (or zeta) could have a positive depth 
@@ -357,62 +371,193 @@ elseif (myqty == QTY_SEA_SURFACE_HEIGHT) then
    location = set_location(TLON(iloc,jloc), TLAT(iloc,jloc), 0.0_r8, VERTISSURFACE)
 
 else  ! Everything else is assumed to be on the rho points
-   location = set_location(TLON(iloc,jloc), TLAT(iloc,jloc), TDEP(iloc,jloc,vloc), VERTISHEIGHT)
+   location = set_location(TLON(iloc,jloc), TLAT(iloc,jloc), TDEP(iloc,jloc,kloc), VERTISHEIGHT)
 
 endif
 
 ! return state quantity for this index if requested
-if (present(var_type)) var_type = myqty
+if (present(qty)) then 
+   qty = myqty
+   if (point_on_land(qty, iloc, jloc)) qty = QTY_DRY_LAND
+endif
 
 end subroutine get_state_meta_data
 
 
 !-----------------------------------------------------------------------
-!>
-!> Model interpolate will interpolate any DART state variable
-!> (i.e. S, T, U, V, Eta) to the given location given a state vector.
-!> The type of the variable being interpolated is obs_type since
-!> normally this is used to find the expected value of an observation
-!> at some location. The interpolated value is returned in interp_vals
-!> and istatus is 0 for success. NOTE: This is a workhorse routine and is
-!> the basis for all the forward observation operator code.
-!>
-!> @param state_handle DART ensemble handle
-!> @param ens_size DART ensemble size
-!> @param location the location of interest
-!> @param obs_type the DART KIND of interest
-!> @param interp_val the estimated value of the DART state at the location
-!>          of interest (the interpolated value).
-!> @param istatus interpolation status ... 0 == success, /=0 is a failure
-!>
-
-subroutine model_interpolate(state_handle, ens_size, location, obs_type, expected_obs, istatus)
+! Model interpolate will interpolate any DART state variable
+! (i.e. T, S, U, V, zeta) to the given location given a state vector.
+! The type of the variable being interpolated is obs_type since
+! normally this is used to find the expected value of an observation
+! at some location. The interpolated value is returned in interp_vals
+! and istatus is 0 for success. NOTE: This is a workhorse routine and is
+! the basis for all the forward observation operator code.
+!
+! state_handle: DART ensemble handle
+! ens_size:     DART ensemble size
+! location:     Location of interest
+! qty:          DART quantity
+! expected_obs: Estimated value of the DART state at the location
+!               of interest (the interpolated value).
+! istatus:      Interpolation status ... 0 == success, /=0 is a failure
+!
+subroutine model_interpolate(state_handle, ens_size, location, qty, expected_obs, istatus)
 
 type(ensemble_type), intent(in)  :: state_handle
 integer,             intent(in)  :: ens_size
 type(location_type), intent(in)  :: location
-integer,             intent(in)  :: obs_type
+integer,             intent(in)  :: qty
 real(r8),            intent(out) :: expected_obs(:)
 integer,             intent(out) :: istatus(:)
 
-if ( .not. module_initialized ) call static_init_model
+! ---- Local
+integer  :: varid, lstatus
+integer  :: qstatus, vstatus 
+integer  :: sshid, salid, i
+integer  :: lon_c(Nc), lat_c(Nc)  ! lon and lat indices of the 4 quad corners
+real(r8) :: pdbar(ens_size)       ! Depth of input point converted from (m) to (dbars)
+real(r8) :: expected_T(ens_size)  ! Ensemble of expected values for potential temperature
+real(r8) :: expected_S(ens_size)  ! Ensemble of expected values for salinity
+real(r8) :: lon_lat_vrt(Nd)       ! lon, lat, vert of the point to interpolate
+real(r8) :: corners(Nc, ens_size) ! State values at the quad corners
+real(r8) :: SSHcorn(Nc, ens_size) ! SSH values at the quad corners
+integer(i8) :: dartidx            ! Index into the DART state
+logical  :: on_land              
+
+
+type(quad_interp_handle) :: interp
+
+if (.not. module_initialized) call static_init_model
 
 ! Successful istatus is 0
 expected_obs = MISSING_R8
 istatus = 99
 
-write(string1,*)'model_interpolate should not be called.'
-write(string2,*)'we are getting forward observations directly from ROMS'
-call error_handler(E_MSG,'model_interpolate:', string1, source, text2=string2)
+! Get the id of the state variable for interpolation 
+! Numbered according to the table list in the input.nml
+! For instance: 
+! T -> 1; S -> 2; U -> 3; V -> 4, Z -> 5
+! If it's 0 then, it's not in the state and 
+! we should just fail
+varid = get_varid_from_kind(domid, qty)
+if (varid < 0) return 
+
+! Unpack the location of the obs 
+lon_lat_vrt = get_location(location)
+
+! Query the grid 
+! Should have 3 options: 
+! T grid, U grid, and V grid 
+interp = get_interp_handle(qty)
+
+! Locate the quad horizontal and get 
+! the indices of its four corners
+call quad_lon_lat_locate(interp, lon_lat_vrt(1), lon_lat_vrt(2), &
+                         lon_c, lat_c, lstatus) 
+if (lstatus /= 0) then  
+   istatus = QUAD_LOCATE_FAILED
+   return 
+endif
+
+if (debug>1) then 
+   do i = 1, Nc
+      write(*, '(A, i1, A, i4, A, i4, A, f10.6, A, f10.6, A)') &
+               'Corner #', i, ': [', lon_c(i), ',', lat_c(i), '] -> [', &
+               TLON(lon_c(i), lat_c(i)),  ',', TLAT(lon_c(i), lat_c(i)), ']'
+   enddo
+endif
+
+! Any part of the quad on land? 
+call quad_on_land(qty, lon_c, lat_c, on_land)  
+if (on_land) then 
+   istatus = QUAD_MAYBE_ON_LAND
+   return 
+endif
+
+! We always need to get the value of SSH at the 4 corners
+! because we need to compute the depth using it.
+! Recall that SSH can be both -ve and +ve
+sshid = get_varid_from_kind(domid, QTY_SEA_SURFACE_HEIGHT)
+do i = 1, Nc
+   dartidx       = get_dart_vector_index(lon_c(i), lat_c(i), 1, domid, sshid)
+   SSHcorn(i, :) = get_state(dartidx, state_handle)
+enddo
+
+! Find the state at the four corners of the quad
+if (qty == QTY_SEA_SURFACE_HEIGHT) then
+   ! TODO: Any other surface obs? Maybe anomalies?  
+   ! For now, the assumption is that we're working with history files
+   ! so each variable has a single time level. If for some reason we
+   ! want to go back to using the restart files, here we need to query
+   ! the number of dimensions for each variable and interpolate along
+   ! the proper time level. 
+   call quad_lon_lat_evaluate(interp, lon_lat_vrt(1), lon_lat_vrt(2), &
+                              lon_c, lat_c, ens_size, SSHcorn,        & 
+                              expected_obs, qstatus)
+   if (qstatus /= 0) then 
+      istatus = SSH_QUAD_EVAL_FAILED
+      return 
+   endif
+endif
+
+
+! If the qty is not at the surface, then 
+! we need to do some vertical interpolation 
+call vert_interp(varid, ens_size, lon_lat_vrt, lon_c, lat_c, &
+                 state_handle, SSHcorn, corners, vstatus)
+
+if (vstatus /= 0) then 
+   istatus = vstatus
+   return
+endif
+
+! Do the interpolation
+call quad_lon_lat_evaluate(interp, lon_lat_vrt(1), lon_lat_vrt(2), &
+                           lon_c, lat_c, ens_size, corners,        & 
+                           expected_obs, qstatus)
+
+if(qty == QTY_TEMPERATURE) then
+  ! Set the potential temperature ensemble values 
+  expected_T = expected_obs
+
+  ! Need Salinity to compute in-situ temperature
+  salid = get_varid_from_kind(domid, QTY_SALINITY)
+
+  ! Pressure in decibars 
+  pdbar = 0.59808_r8*(exp(-0.025_r8*lon_lat_vrt(3)) - 1.0_r8) + &
+          1.00766_r8*lon_lat_vrt(3) + 2.28405e-6_r8*lon_lat_vrt(3)**2
+
+  ! Vertical interp for salt
+  call vert_interp(salid, ens_size, lon_lat_vrt, lon_c, lat_c, &
+                 state_handle, SSHcorn, corners, vstatus)
+  
+  call quad_lon_lat_evaluate(interp, lon_lat_vrt(1), lon_lat_vrt(2), &
+                             lon_c, lat_c, ens_size, corners,        &
+                             expected_S, qstatus)
+
+  ! Deduce the in-situ temperature values
+  expected_obs = sensible_temp(expected_T, expected_S, pdbar) 
+endif
+
+if (qstatus /= 0) then
+   istatus = QUAD_EVALUATE_FAILED
+   return
+endif
+
+istatus = 0
+
+! check z (+ve 0 -ve)
+! clean model_mod (netcdf)
+! remove old interp routines
 
 end subroutine model_interpolate
 
 
 !-----------------------------------------------------------------------
-!>
-!> Returns the the time step of the model; the smallest increment in
-!> time that the model is capable of advancing the ROMS state.
-!>
+!
+! Returns the the time step of the model; the smallest increment in
+! time that the model is capable of advancing the ROMS state.
+!
 
 function shortest_time_between_assimilations()
 
@@ -872,64 +1017,77 @@ end subroutine get_grid_dimensions
 
 subroutine get_grid()
 
-integer                     :: ncid, k
+integer                     :: ncid
 character(len=*), parameter :: routine = 'get_grid'
 
-real(r8), allocatable       :: h(:,:), zeta(:,:), zeta_lf(:,:,:) 
+real(r8), allocatable       :: zeta(:,:), zeta_lf(:,:,:) 
 real(r8), allocatable       :: mask(:,:)   ! Land mask: 0 land & 1 water
-real(r8), allocatable       :: Cs_r(:), Cs_w(:)
-real(r8), allocatable       :: sc_r, sc_w
-real(r8)                    :: hc
-integer                     :: Vt
 
-if (.not. allocated(ULAT)) allocate(ULAT(Nu, Ny))
-if (.not. allocated(ULON)) allocate(ULON(Nu, Ny))
-if (.not. allocated(UMSK)) allocate(UMSK(Nu, Ny))
-if (.not. allocated(UDEP)) allocate(UDEP(Nu, Ny, Nz))
+allocate(ULAT(Nu, Ny), ULON(Nu, Ny), UMSK(Nu, Ny), UDEP(Nu, Ny, Nz))
+allocate(VLAT(Nx, Nv), VLON(Nx, Nv), VMSK(Nx, Nv), VDEP(Nx, Nv, Nz))
+allocate(TLAT(Nx, Ny), TLON(Nx, Ny), TMSK(Nx, Ny), TDEP(Nx, Ny, Nz))
 
-if (.not. allocated(VLAT)) allocate(VLAT(Nx, Nv))
-if (.not. allocated(VLON)) allocate(VLON(Nx, Nv))
-if (.not. allocated(VMSK)) allocate(VMSK(Nx, Nv))
-if (.not. allocated(VDEP)) allocate(VDEP(Nx, Nv, Nz))
+allocate(h(Nx,Ny), Cr(Nz), sr(Nz), Cw(Nw), sw(Nw), WDEP(Nx, Ny, Nw))
+allocate(basin_depth(Nx, Ny))
 
-if (.not. allocated(TLAT)) allocate(TLAT(Nx, Ny))
-if (.not. allocated(TLON)) allocate(TLON(Nx, Ny))
-if (.not. allocated(TMSK)) allocate(TMSK(Nx, Ny))
-if (.not. allocated(TDEP)) allocate(TDEP(Nx, Ny, Nz))
-
-if (.not. allocated(WDEP)) allocate(WDEP(Nx, Ny, Nw))
+! s-coordinates at RHO-points
+!do ik = 1, Nz
+!   sr(ik) = (ik - 0.5_r8 - Nz) / Nz
+!enddo
+! s-coordinates at W-points
+!do ik = 0, Nz
+!   sw(ik+1) = (real(ik) - Nz) / Nz
+!enddo
 
 ! Read the vertical information 
 ncid = nc_open_file_readonly(roms_filename, routine)
 
+! Varibles needed to calculate depth given the free surface
+call nc_get_variable(ncid, 'h'         , h , routine)
+call nc_get_variable(ncid, 'hc'        , hc, routine)
+call nc_get_variable(ncid, 'Cs_r'      , Cr, routine)
+call nc_get_variable(ncid, 's_rho'     , sr, routine)
+call nc_get_variable(ncid, 'Cs_w'      , Cw, routine)
+call nc_get_variable(ncid, 's_w'       , sw, routine)
+call nc_get_variable(ncid, 'Vtransform', Vt, routine)
+
 ! Check whether physical depth data exist in the restart file
 if (nc_variable_exists(ncid, 'z_rho')) then 
-   ! Physical depth exists in the Netcdf file
-   call nc_get_variable(ncid, 'z_u'  , UDEP, routine)
-   call nc_get_variable(ncid, 'z_w'  , WDEP, routine)
-   call nc_get_variable(ncid, 'z_v'  , VDEP, routine)
+
+   ! It exists, so grab all of them
    call nc_get_variable(ncid, 'z_rho', TDEP, routine)
+   call nc_get_variable(ncid, 'z_u'  , UDEP, routine)
+   call nc_get_variable(ncid, 'z_v'  , VDEP, routine)
+   call nc_get_variable(ncid, 'z_w'  , WDEP, routine)
+   TDEP = -TDEP
+   UDEP = -UDEP
+   VDEP = -VDEP
+   
+   basin_depth = -WDEP(:, :, 1)
 else
+   
    ! Need to compute the physical depth
    ! Check whether zeta is coming from a history or a restart file
    ! The 3rd dimension shouldn't exist in a history file
-   allocate(zeta(Nx, Ny), h(Nx, Ny))   
-   allocate(Cs_r(Nz), Cs_w(Ns_w))
-   
+   allocate(zeta(Nx, Ny))
+
    if (nc_dimension_exists(ncid, 'three')) then 
       allocate(zeta_lf(Nx, Ny, 3))
       zeta = zeta_lf(:, :, 1)
    else 
-      call nc_get_variable(ncid, 'zeta'   , zeta, routine)
+      call nc_get_variable(ncid, 'zeta', zeta, routine)
    endif 
-   call nc_get_variable(ncid, 'h'         , h     , routine)
-   call nc_get_variable(ncid, 'hc'        , hc    , routine)
-   call nc_get_variable(ncid, 'Cs_r'      , Cs_r  , routine)
-   call nc_get_variable(ncid, 'Cs_w'      , Cs_w  , routine)
-   call nc_get_variable(ncid, 'Vtransform', Vt    , routine)
 
-   call compute_physical_depth(h, zeta, Cs_r, Cs_w, hc, Vt, &
-                               TDEP, WDEP, UDEP, VDEP)     
+   ! Find depth at the center of the cells
+   do ix = 1, Nx
+      do iy = 1, Ny 
+         call compute_physical_depth(h(ix, iy), zeta(ix, iy), TDEP(ix, iy, :))
+         call ocean_floor(h(ix, iy), zeta(ix, iy), basin_depth(ix, iy))
+      enddo
+   enddo
+
+   ! Average in xi and eta directions
+   call U_V_depths()
 endif
 
 ! Read in the land mask
@@ -969,21 +1127,18 @@ where (VLON < 0.0_r8) VLON = VLON + 360.0_r8
 if (do_output() .and. debug > 0) then
     write(string1,*) '    min/max ULON ', minval(ULON), maxval(ULON)
     write(string2,*)     'min/max ULAT ', minval(ULAT), maxval(ULAT)
-    write(string3,*)     'min/max UDEP ', minval(UDEP), maxval(UDEP, MASK=UDEP<Zmax)
+    write(string3,*)     'min/max UDEP ', minval(UDEP, MASK=UDEP>Zm), maxval(UDEP)
     call error_handler(E_MSG, routine, string1, text2=string2, text3=string3)
 
     write(string1,*) '    min/max VLON ', minval(VLON), maxval(VLON)
     write(string2,*)     'min/max VLAT ', minval(VLAT), maxval(VLAT)
-    write(string3,*)     'min/max VDEP ', minval(VDEP), maxval(VDEP, MASK=VDEP<Zmax)
+    write(string3,*)     'min/max VDEP ', minval(VDEP, MASK=VDEP>Zm), maxval(VDEP)
     call error_handler(E_MSG, routine, string1, text2=string2, text3=string3)
 
     write(string1,*) '    min/max TLON ', minval(TLON), maxval(TLON)
     write(string2,*)     'min/max TLAT ', minval(TLAT), maxval(TLAT)
-    write(string3,*)     'min/max TDEP ', minval(TDEP), maxval(TDEP, MASK=TDEP<Zmax)
+    write(string3,*)     'min/max TDEP ', minval(TDEP, MASK=TDEP>Zm), maxval(TDEP)
     call error_handler(E_MSG, routine, string1, text2=string2, text3=string3)
-
-    write(string1,*)'    min/max WDEP ', minval(WDEP), maxval(WDEP, MASK=WDEP<Zmax)
-    call error_handler(E_MSG, routine, string1)
 endif
 
 call nc_close_file(ncid, routine)
@@ -991,103 +1146,286 @@ call nc_close_file(ncid, routine)
 end subroutine get_grid
 
 
-
 !-----------------------------------------------------------------------
-!>
-!> Fill the array of requested variables, dart kinds, possible min/max
-subroutine compute_physical_depth(h, z, Cr, Cw, hc, Vt, z_r, z_w, z_u, z_v)
+! Get physical depth z_rho using ROMS formulations:
+! refer to set_depth.F
+subroutine compute_physical_depth(b, z, d)
 
 character(len=*), parameter :: routine = 'compute_physical_depth'
 
-real(r8), intent(in)  :: h(:,:), z(:,:), Cr(:), Cw(:)
-real(r8), intent(in)  :: hc
-integer , intent(in)  :: Vt
-
-
-real(r8), intent(out) :: z_r(:,:,:), z_w(:,:,:)
-real(r8), intent(out) :: z_u(:,:,:), z_v(:,:,:)
-
-integer  :: ix, iy, ik
-real(r8) :: sr(Nz), sw(Ns_w)
-real(r8) :: z0
-
-! s-coordinates at RHO-points
-do ik = 1, Nz
-   sr(ik) = (ik - 0.5_r8 - Nz) / Nz
-enddo
-
-! s-coordinates at W-points
-do ik = 0, Nz
-   sw(ik+1) = (real(ik) - Nz) / Nz
-enddo
+real(r8), intent(in)  :: b, z   ! bathymetry and free surface
+real(r8), intent(out) :: d(Nz)  ! depth at all levels
+real(r8)              :: z0
 
 if (debug > 100) then 
    do ik = 1, Nz
-      write(*, '(A, i3, A, f10.7, A, f10.7, A, f10.7)') &
-               'Layer: ', ik, ', S_RHO: ', sr(ik), &
+      write(*, '(A, i3, A, f10.7)') 'Layer: ', ik, ', S_RHO: ', sr(ik) 
+   enddo
+endif
+
+! Compute z at RHO points 
+do ik = 1, Nz
+   if (Vt == 1) then ! Original transformation
+      z0    = hc*(sr(ik) - Cr(ik)) + Cr(ik)*b 
+      d(ik) = z0 + z * (1.0_r8 + z0/b)
+   elseif (Vt == 2) then ! New transformation
+      z0    = (hc*sr(ik) + Cr(ik)*b)/(hc+b) 
+      d(ik) = z + z0*(z+b) 
+   else
+      string1 = 'Unsupported Vtransform'
+      call error_handler(E_ERR, routine, string1)
+   endif 
+enddo
+
+! Reverse the sign: 
+! Below the surface is +ve depth
+! Surface is 0
+! Above the surface is -ve depth
+d = -d
+
+end subroutine compute_physical_depth
+
+!-----------------------------------------------------------------------
+! Use the depth at W points to find the basin depth
+subroutine ocean_floor(b, z, d)
+
+character(len=*), parameter :: routine = 'oecean_floor'
+
+real(r8), intent(in)  :: b, z ! bathymetry and free surface
+real(r8), intent(out) :: d    ! ocean_floor
+real(r8)              :: z0
+
+if (debug > 100) then
+   do ik = 1, Nz
+      write(*, '(A, i3, A, f10.7, A, f10.7)') 'Layer: ', ik, &
                ', S_W: ', sw(ik), ' .. ', sw(ik+1)
    enddo
 endif
 
-! Compute z_r and z_w
-do ix = 1, Nx
-   do iy = 1, Ny
+! Compute z_w at the bottom of the ocean 
+ik = 1
+if (Vt == 1) then ! Original transformation
+   z0 = hc*(sw(ik) - Cw(ik)) + Cw(ik)*b
+   d  = z0 + z * (1.0_r8 + z0/b)
+elseif (Vt == 2) then ! New transformation
+   z0 = (hc*sw(ik) + Cw(ik)*b)/(hc+b)
+   d  = z + z0*(z+b)
+else
+   string1 = 'Unsupported Vtransform'
+   call error_handler(E_ERR, routine, string1)
+endif
 
-      do ik = 1, Nz
-         if (Vt == 1) then ! Original transformation
-            z0 = hc*(sr(ik) - Cr(ik)) + Cr(ik)*h(ix, iy) 
-            z_r(ix, iy, ik) = z0 + z(ix, iy) * (1.0_r8 + z0/h(ix, iy))
-         elseif (Vt == 2) then ! New transformation
-             z0 = (hc*sr(ik) + Cr(ik)*h(ix, iy))/(hc + h(ix, iy)) 
-             z_r(ix, iy, ik) = z(ix, iy) + z0*(z(ix, iy) + h(ix, iy)) 
-         else
-            string1 = 'Unsupported Vtransform'
-            call error_handler(E_ERR, routine, string1)
-         endif 
-         !z_r(ix, iy, ik) = z_r(ix, iy, ik) * mask(ix, iy)
-      enddo
+d = -d
 
-      do ik = 1, Nz+1
-         if (Vt == 1) then ! Original transformation
-            z0 = hc*(sw(ik) - Cw(ik)) + Cw(ik)*h(ix, iy) 
-            z_w(ix, iy, ik) = z0 + z(ix, iy) * (1.0_r8 + z0/h(ix, iy)) 
-         elseif (Vt == 2) then ! New transformation
-             z0 = (hc*sw(ik) + Cw(ik)*h(ix, iy))/(hc + h(ix, iy))
-             z_w(ix, iy, ik) = z(ix, iy) + z0*(z(ix, iy) + h(ix, iy))
-         else
-            string1 = 'Unsupported Vtransform'
-            call error_handler(E_ERR, routine, string1)
-         endif
-         !z_w(ix, iy, ik) = z_w(ix, iy, ik) * mask(ix, iy)
-      enddo
+end subroutine ocean_floor
 
-   enddo
-enddo
+!-----------------------------------------------------------------------
+! Using z_rho, compute z_u and z_v
+subroutine U_V_depths()
 
 ! Compute z_u; average in xi direction 
 do ix = 1, Nx-1
    do iy = 1, Ny
-      z_u(ix, iy, :) = 0.5_r8 * (z_r(ix, iy, :) + z_r(ix+1, iy, :))
+      UDEP(ix, iy, :) = 0.5_r8 * (TDEP(ix, iy, :) + TDEP(ix+1, iy, :))
    enddo
 enddo
 
 ! Compute z_v; average in eta direction 
 do ix = 1, Nx
    do iy = 1, Ny-1
-      z_v(ix, iy, :) = 0.5_r8 * (z_r(ix, iy, :) + z_r(ix, iy+1, :))
+      VDEP(ix, iy, :) = 0.5_r8 * (TDEP(ix, iy, :) + TDEP(ix, iy+1, :))
    enddo
 enddo
 
-end subroutine 
-
+end subroutine U_V_depths 
 
 !-----------------------------------------------------------------------
-!>
-!> Fill the array of requested variables, dart kinds, possible min/max
-!> values and whether or not to update the field in the output file.
-!>
-!>@param state_variables the list of variables and kinds from model_mod_nml
-!>@param ngood the number of variable/KIND pairs specified
+! Apply vertical interpolation using the four corners of the quad
+
+subroutine vert_interp(varid, ens_size, lon_lat_vrt, lon_c, lat_c, &
+                       state_handle, SSHcorn, corners, dstatus)
+
+integer, intent(in)             :: varid
+integer, intent(in)             :: ens_size 
+real(r8), intent(in)            :: lon_lat_vrt(Nd)   
+integer, intent(in)             :: lon_c(Nc)
+integer, intent(in)             :: lat_c(Nc)
+type(ensemble_type), intent(in) :: state_handle
+real(r8), intent(in)            :: SSHcorn(Nc, ens_size) 
+real(r8), intent(out)           :: corners(Nc, ens_size) ! State values at the quad corners
+
+integer  :: i, ie, il
+integer  :: dstatus, Nl, lz
+integer  :: lev(ens_size, 2)      ! Bottom (1) and Top (2) level indices that bounds point of interest 
+integer  :: levels(2*ens_size)    ! Unique vertical levels across the ensemble
+real(r8) :: depths(Nz)            ! Depths for each ensemble member
+real(r8) :: lev_frc(ens_size)     ! Fractional distances between bot and top 
+real(r8) :: Zvals(Nz, ens_size)   ! All ensemble values to be interpolated
+real(r8) :: tops, bots            ! Ensemble level values
+real(r8) :: bath                  ! Bathymetry at a single point
+integer(i8) :: dartidx     
+
+do i = 1, Nc
+   bath = h(lon_c(i), lat_c(i))
+  
+   ! Physical depth is a function of SSH and differs 
+   ! across the ensemble
+   do ie = 1, ens_size
+      call compute_physical_depth(bath, SSHcorn(i, ie), depths) 
+      call depth_bounds(lon_lat_vrt(3), depths, lev(ie, 1), lev(ie, 2), lev_frc(ie), dstatus)
+
+      if (dstatus /= 0) return
+   enddo
+
+   ! Now, get the state. First, find unique vertical levels 
+   ! used in the ensemble of vertical interpolation 
+   call unique_levels(lev(:, 1), lev(:, 2), ens_size, levels, Nl)
+
+   do il = 1, Nl
+      lz = levels(il)
+      dartidx      = get_dart_vector_index(lon_c(i), lat_c(i), lz, domid, varid)
+      Zvals(lz, :) = get_state(dartidx, state_handle)
+
+      !print *, 'il: ', il, 'lvl: ', lz, 'DART indx: ', dartidx, 'Zvals: ', Zvals(lz, :)
+   enddo
+   do ie = 1, ens_size
+      tops = Zvals(lev(ie, 1), ie)
+      bots = Zvals(lev(ie, 2), ie)
+
+      corners(i, ie) = bots + lev_frc(ie)*(tops-bots)
+      !print *, 'i: ', i, 'corner: ', corners(i, ie)
+   enddo
+enddo
+
+end subroutine vert_interp
+
+!------------------------------------------------------------------
+! Any model specific distance calcualtion can be done here
+subroutine get_close_obs(gc, base_loc, base_type, locs, loc_qtys, loc_types, &
+                         num_close, close_ind, dist, ens_handle)
+
+type(get_close_type),          intent(in)    :: gc            ! handle to a get_close structure
+integer,                       intent(in)    :: base_type     ! observation TYPE
+type(location_type),           intent(inout) :: base_loc      ! location of interest
+type(location_type),           intent(inout) :: locs(:)       ! obs locations
+integer,                       intent(in)    :: loc_qtys(:)   ! QTYS for obs
+integer,                       intent(in)    :: loc_types(:)  ! TYPES for obs
+integer,                       intent(out)   :: num_close     ! how many are close
+integer,                       intent(out)   :: close_ind(:)  ! incidies into the locs array
+real(r8),            optional, intent(out)   :: dist(:)       ! distances in radians
+type(ensemble_type), optional, intent(in)    :: ens_handle
+
+character(len=*), parameter :: routine = 'get_close_obs'
+
+call loc_get_close_obs(gc, base_loc, base_type, locs, loc_qtys, loc_types, &
+                          num_close, close_ind, dist, ens_handle)
+
+end subroutine get_close_obs
+
+!------------------------------------------------------------------
+! Any model specific distance calcualtion can be done here
+subroutine get_close_state(gc, base_loc, base_type, locs, loc_qtys, loc_indx, &
+                           num_close, close_ind, dist, ens_handle)
+
+type(get_close_type),          intent(in)    :: gc           ! handle to a get_close structure
+type(location_type),           intent(inout) :: base_loc     ! location of interest
+integer,                       intent(in)    :: base_type    ! observation TYPE
+type(location_type),           intent(inout) :: locs(:)      ! state locations
+integer,                       intent(in)    :: loc_qtys(:)  ! QTYs for state
+integer(i8),                   intent(in)    :: loc_indx(:)  ! indices into DART state vector
+integer,                       intent(out)   :: num_close    ! how many are close
+integer,                       intent(out)   :: close_ind(:) ! indices into the locs array
+real(r8),            optional, intent(out)   :: dist(:)      ! distances in radians
+type(ensemble_type), optional, intent(in)    :: ens_handle
+
+character(len=*), parameter :: routine = 'get_close_state'
+
+integer  :: ii, i, j, k
+real(r8) :: lon_lat_vert(Nd)
+
+call loc_get_close_state(gc, base_loc, base_type, locs, loc_qtys, loc_indx, &
+                            num_close, close_ind, dist, ens_handle)
+
+if (.not. present(dist)) return
+
+! Put any land points very far away
+! so they are not updated by obs
+do ii = 1, num_close
+  if(loc_qtys(close_ind(ii)) == QTY_DRY_LAND) dist(ii) = 1.0e9_r8
+ 
+  lon_lat_vert = get_location(locs(close_ind(ii)))
+  call get_model_variable_indices(loc_indx(ii), i, j, k)
+  
+  if (below_sea_floor(i, j, lon_lat_vert(Nd))) dist(ii) = 1.0e9_r8 
+enddo
+
+end subroutine get_close_state
+
+!------------------------------------------------------------
+! calculate sensible (in-situ) temperature from 
+! local pressure, salinity, and potential temperature
+elemental function sensible_temp(potemp, s, lpres)
+
+real(r8), intent(in)  :: potemp ! potential temperature in C
+real(r8), intent(in)  :: s      ! salinity Practical Salinity Scale 1978 (PSS-78)
+real(r8), intent(in)  :: lpres  ! pressure in decibars
+real(r8) :: sensible_temp ! in-situ (sensible) temperature (C)
+
+integer  :: i,j,n
+real(r8) :: dp,p,q,r1,r2,r3,r4,r5,s1,t,x
+
+s1 = s - 35.0_r8
+p  = 0.0_r8
+t  = potemp
+
+dp = lpres - p
+n  = int (abs(dp)/1000.0_r8) + 1
+dp = dp/n
+
+do i=1,n
+   do j=1,4
+
+      r1 = ((-2.1687e-16_r8 * t + 1.8676e-14_r8) * t - 4.6206e-13_r8) * p
+      r2 = (2.7759e-12_r8*t - 1.1351e-10_r8) * s1
+      r3 = ((-5.4481e-14_r8 * t + 8.733e-12_r8) * t - 6.7795e-10_r8) * t
+      r4 = (r1 + (r2 + r3 + 1.8741e-8_r8)) * p + (-4.2393e-8_r8 * t+1.8932e-6_r8) * s1
+      r5 = r4 + ((6.6228e-10_r8 * t-6.836e-8_r8) * t + 8.5258e-6_r8) * t + 3.5803e-5_r8
+
+      x  = dp*r5
+
+      if (j == 1) then
+         t = t + 0.5_r8 * x
+         q = x
+         p = p + 0.5_r8 * dp
+      
+      else if (j == 2) then
+         t = t + 0.29298322_r8 * (x-q)
+         q = 0.58578644_r8 * x + 0.121320344_r8 * q
+
+      else if (j == 3) then
+         t = t + 1.707106781_r8 * (x-q)
+         q = 3.414213562_r8*x - 4.121320344_r8*q
+         p = p + 0.5_r8*dp
+
+      else ! j must == 4
+         t = t + (x - 2.0_r8 * q) / 6.0_r8
+
+      endif
+
+   enddo ! j loop
+enddo ! i loop
+
+sensible_temp = t
+
+end function sensible_temp
+
+!-----------------------------------------------------------------------
+!
+! Fill the array of requested variables, dart kinds, possible min/max
+! values and whether or not to update the field in the output file.
+!
+! state_variables the list of variables and kinds from model_mod_nml
+! ngood the number of variable/KIND pairs specified
 
 subroutine parse_variable_input(state_variables, ngood)
 
@@ -1680,20 +2018,248 @@ end function get_location_from_ijk
 
 subroutine setup_interpolation
 
+! temp
+call init_quad_interp(GRID_QUAD_FULLY_IRREGULAR, Nx, Ny, &
+                      QUAD_LOCATED_CELL_CENTERS,         &
+                      .false., .false., .false.,         & 
+                      interp_t_grid)
+call set_quad_coords(interp_t_grid, TLON, TLAT, TMSK)
 
+! u-momentum
+call init_quad_interp(GRID_QUAD_FULLY_IRREGULAR, Nu, Ny, &
+                      QUAD_LOCATED_LON_EDGES,            &    
+                      .false., .false., .false.,         &    
+                      interp_u_grid)
+call set_quad_coords(interp_u_grid, ULON, ULAT, UMSK)
 
+! v-momentum
+call init_quad_interp(GRID_QUAD_FULLY_IRREGULAR, Nx, Nv, &
+                      QUAD_LOCATED_LAT_EDGES,            &    
+                      .false., .false., .false.,         &    
+                      interp_v_grid)
+call set_quad_coords(interp_v_grid, VLON, VLAT, VMSK)
 
 end subroutine setup_interpolation
 
+
+!------------------------------------------------------------
+! Returns the appropriate quad_interp handle
+function get_interp_handle(qty)
+
+type(quad_interp_handle) :: get_interp_handle
+integer, intent(in)      :: qty
+
+if (on_u_grid(qty)) then
+  get_interp_handle = interp_u_grid
+elseif (on_v_grid(qty)) then
+  get_interp_handle = interp_v_grid
+else
+  get_interp_handle = interp_t_grid
+endif
+
+end function
+
+!---------------------------------------------------------
+! Check if we're on the U grid
+function on_u_grid(qty)
+
+integer, intent(in) :: qty
+logical             :: on_u_grid
+
+on_u_grid = .false.
+if (qty == QTY_U_CURRENT_COMPONENT) on_u_grid = .true.
+
+end function on_u_grid
+
+!------------------------------------------------------------
+! Check if we're on the V grid
+function on_v_grid(qty)
+
+integer, intent(in) :: qty
+logical             :: on_v_grid
+
+on_v_grid = .false.
+if (qty == QTY_V_CURRENT_COMPONENT) on_v_grid = .true.
+
+end function on_v_grid
+
+!----------------------------------------------------------
+! Check if we're on the T grid
+function on_t_grid(qty)
+
+integer, intent(in) :: qty
+logical             :: on_t_grid
+
+on_t_grid = .true.
+if (qty == QTY_U_CURRENT_COMPONENT .or. & 
+    qty == QTY_V_CURRENT_COMPONENT) on_t_grid = .false.
+
+end function on_t_grid
+
+!-----------------------------------------------------------
+! Figure out whether a point is on land or not
+
+function point_on_land(qty, ilon, ilat)
+
+integer :: qty, ilon, ilat
+logical :: point_on_land
+
+if (on_u_grid(qty)) then 
+   point_on_land = UMSK(ilon, ilat) 
+elseif (on_v_grid(qty)) then 
+   point_on_land = VMSK(ilon, ilat) 
+else
+   point_on_land = TMSK(ilon, ilat) 
+endif
+
+end function point_on_land
+
+!-----------------------------------------------------------
+! Figure out whether a point is below sea floor
+
+function below_sea_floor(ilon, ilat, depth)
+
+integer  :: ilon, ilat
+real(r8) :: depth
+logical  :: below_sea_floor 
+
+below_sea_floor = .false.
+if (depth > basin_depth(ilon, ilat)) below_sea_floor = .true. 
+
+end function below_sea_floor 
+
+!-----------------------------------------------------------
+! Figure out whether any part of the quad is on land 
+
+subroutine quad_on_land(qty, lons, lats, status)
+
+integer, intent(in)  :: qty, lons(:), lats(:)
+logical, intent(out) :: status
+
+status = .false.
+
+if (on_u_grid(qty)) then 
+   status = UMSK(lons(1), lats(1)) .or. &
+            UMSK(lons(2), lats(2)) .or. &
+            UMSK(lons(3), lats(3)) .or. &
+            UMSK(lons(4), lats(4))
+elseif (on_v_grid(qty)) then 
+   status = VMSK(lons(1), lats(1)) .or. &
+            VMSK(lons(2), lats(2)) .or. &
+            VMSK(lons(3), lats(3)) .or. &
+            VMSK(lons(4), lats(4))
+else 
+   status = TMSK(lons(1), lats(1)) .or. &
+            TMSK(lons(2), lats(2)) .or. &
+            TMSK(lons(3), lats(3)) .or. &
+            TMSK(lons(4), lats(4))
+endif   
+
+end subroutine quad_on_land
+
 !-----------------------------------------------------------------------
-!>
-!> Does any shutdown and clean-up needed for model.
-!>
+! Does any shutdown and clean-up needed for model.
+
+subroutine depth_bounds(in_depth, all_depth, bot, top, frc, istatus)
+
+real(r8), intent(in)  :: in_depth
+real(r8), intent(in)  :: all_depth(Nz)
+integer,  intent(out) :: bot, top
+real(r8), intent(out) :: frc
+integer,  intent(out) :: istatus
+
+integer :: lo, hi, mid
+
+istatus = 0
+
+! Too shallow
+if (in_depth <= all_depth(Nz)) then
+   bot = Nz - 1
+   top = Nz
+   frc = 1.0_r8
+   return
+endif
+
+! Too deep
+if (in_depth > all_depth(1)) then
+   bot = -1
+   top = -1
+   frc = 0.0_r8
+
+   istatus = OBS_TOO_DEEP
+   return
+endif
+
+! Binary search: find bot such that all_depth(bot) < in_depth <= all_depth(top)
+lo = 1
+hi = Nz
+
+do while (hi - lo > 1)
+   mid = (lo + hi) / 2
+   if (in_depth > all_depth(mid)) then
+      hi = mid
+   else
+      lo = mid
+   endif
+enddo
+
+bot = lo
+top = lo + 1
+
+if (all_depth(top) == all_depth(bot)) then
+   frc = 0.0_r8
+else
+   ! linear interpolation 
+   ! This will not divide by zero
+   frc = (in_depth - all_depth(bot)) / (all_depth(top) - all_depth(bot))
+endif
+
+end subroutine depth_bounds
+
+!-----------------------------------------------------------------------
+! Given a set of bottom and top levels for each ensemble member, 
+! what is the list of unique vertical levels across the ensemble?
+
+subroutine unique_levels(val1, val2, N, val_un, N_un)
+  
+  integer, intent(in)  :: N
+  integer, intent(in)  :: val1(N), val2(N)
+  integer, intent(out) :: val_un(2*N)
+  integer, intent(out) :: N_un
+
+  integer :: val(2*N)
+  integer :: i, j
+  logical :: is_new
+  integer :: count
+
+  ! Combine inputs
+  val(1:N) = val1
+  val(N+1:2*N) = val2
+
+  count = 0
+  do i = 1, 2*N
+     is_new = .true.
+     ! Check if val(i) is already in val_un
+     do j = 1, count
+        if (val(i) == val_un(j)) then
+           is_new = .false.
+           exit
+        endif
+     enddo
+     ! Add to val_un if it's new
+     if (is_new) then
+        count = count + 1
+        val_un(count) = val(i)
+     endif
+  enddo
+
+  N_un = count
+end subroutine unique_levels
+
+!-----------------------------------------------------------------------
+! Does any shutdown and clean-up needed for model.
 
 subroutine end_model()
-
-! good style ... perhaps you could deallocate stuff (from static_init_model?).
-! deallocate(state_loc)
 
 if (allocated(ULAT)) deallocate(ULAT)
 if (allocated(ULON)) deallocate(ULON)
@@ -1708,6 +2274,10 @@ if (allocated(TLON)) deallocate(TLON)
 if (allocated(TDEP)) deallocate(TDEP)
 
 if (allocated(WDEP)) deallocate(WDEP)
+
+if (allocated(TMSK)) deallocate(TMSK)
+if (allocated(UMSK)) deallocate(UMSK)
+if (allocated(VMSK)) deallocate(VMSK)
 
 end subroutine end_model
 
