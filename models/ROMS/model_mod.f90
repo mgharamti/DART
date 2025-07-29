@@ -1,109 +1,90 @@
 ! DART software - Copyright UCAR. This open source software is provided
 ! by UCAR, "as is", without charge, subject to all terms of use at
 ! http://www.image.ucar.edu/DAReS/DART/DART_download
+
+
+
+! This is the interface between the Rutgers version of the ROMS ocean model and DART.
+! The required public interfaces arguments CANNOT be changed.
 !
-! $Id$
-!----------------------------------------------------------------
-!>
-!> This is the interface between the ROMS ocean model and DART.
-!> The required public interfaces arguments CANNOT be changed.
-!>
-!> Written in collaboration between Hernan Arango, Andy Moore, Chris Edwards
-!> and the DART team. Uses/requires precomputed forward operator
-!> values output directly from ROMS (i.e. the output of s4dvar.in:MODname).
-!> The obs values are computed at the exact time of the obs as the model
-!> is advancing (FGAT - First Guess at Appropriate Time). As a result,
-!> there is currently NO model_interpolate() routine, since all
-!> the observations already have expected values. What is required is
-!> the ability to convert -on-demand- a DART observation sequence file
-!> from the ROMS observation format. This is done with the convert_roms_obs
-!> program in observations/ROMS.
-!>
-!> If required for other obs, the model_interpolate code will
-!> need to be written and tested.
-!>
-!> The ROMS model uses a mask array to indicate dry land, so inside
-!> DART and this model mod we can ignore dry land completely.  there
-!> is no need to read the mask or account for it in get_state_meta_data
-!> or get_close.
-!>
-!----------------------------------------------------------------
+! Unlike the UCLA version, the interface does not use/require precomputed 
+! forward operator values output directly from ROMS (i.e. s4dvar.in:MODname).
+! A model interpolation routine is implemented to find the expected value
+! of the observation along any vertical location. The interpolation is 
+! implemented using the quad utility functions.   
+!
+! In a barotropic mode, the Rutgers ROMS applies a LF-AM3 with FB Feedback 
+! numerical stepping scheme (myroms.org/wiki/Numerical_Solution_Technique)
+! It also applies an AB3 scheme for 3D momenta
+! LF : Leapfrog;
+! AM3: Three-time Adams-Moulton corrector;
+! FB : Forward-Backward;
+! AB3: Third-order Adams-Bashforth step
+!
+! As such, several variables in the restart files have more than one
+! time level. Instead of dealing with multi-level variables, we opted in 
+! this interface to use the ROMS history files as ensemble members. All
+! variables in these files have single time levels, making interpolation 
+! and other computations a lot more straight-forward. 
+!
+! The conversion from the sigma terrain-following (S-level) vertical 
+! coordinate for physical depth (Z-level) is done: (1) either by 
+! reading the z-level coordinates directly from the input file if 
+! they are available, or (2) by actually computing them. The 
+! computation here is done in a similar fashion to ROMS.
+
+
 
 module model_mod
 
 ! Modules that are absolutely required for use are listed
-use        types_mod, only : r4, r8, digits12, SECPERDAY, DEG2RAD, rad2deg, PI, &
-                             MISSING_I, MISSING_R4, MISSING_R8, i4, i8, &
-                             vtablenamelength
-
-use time_manager_mod, only : time_type, set_time, set_date, get_date, get_time, &
-                             print_time, print_date,                            &
-                             set_calendar_type, get_calendar_type,              &
-                             operator(*),  operator(+), operator(-),            &
-                             operator(>),  operator(<), operator(/),            &
-                             operator(/=), operator(<=)
-
-use     location_mod, only : location_type, set_location, get_location,         &
-                             write_location, set_location_missing,              &
-                             loc_get_close_obs => get_close_obs,                &
-                             loc_get_close_state => get_close_state,            &
-                             convert_vertical_obs, convert_vertical_state,      &
-                             VERTISHEIGHT, VERTISSURFACE, query_location,       &
-                             set_vertical, get_close_type
-
-use    utilities_mod, only : register_module, error_handler, do_nml_term,       &
-                             E_ERR, E_WARN, E_MSG, logfileunit, nmlfileunit,    &
-                             get_unit, do_output, to_upper, do_nml_file,        &
-                             find_namelist_in_file, check_namelist_read,        &
-                             open_file, file_exist, find_textfile_dims,         &
-                             file_to_text, do_output, close_file,               &
-                             string_to_real, string_to_logical
-
-use quad_utils_mod,   only : quad_interp_handle, set_quad_coords,               &
-                             init_quad_interp, finalize_quad_interp,            &
-                             quad_lon_lat_locate, quad_lon_lat_evaluate,        &
-                             GRID_QUAD_FULLY_IRREGULAR, QUAD_LOCATED_LON_EDGES, &
-                             QUAD_LOCATED_CELL_CENTERS, QUAD_LOCATED_LAT_EDGES
-
-use     obs_kind_mod, only : QTY_TEMPERATURE,           &
-                             QTY_SALINITY,              &
-                             QTY_U_CURRENT_COMPONENT,   &
-                             QTY_V_CURRENT_COMPONENT,   &
-                             QTY_SEA_SURFACE_HEIGHT,    &
-                             QTY_SEA_SURFACE_PRESSURE,  &
-                             QTY_POTENTIAL_TEMPERATURE, &
-                             QTY_DRY_LAND,              &
-                             get_index_for_quantity,    &
-                             get_name_for_quantity
-
-use     mpi_utilities_mod, only : my_task_id
-
-use        random_seq_mod, only : random_seq_type, init_random_seq, random_gaussian
-
-use  ensemble_manager_mod, only : ensemble_type
-
-use distributed_state_mod, only : get_state, get_state_array
-
-use   state_structure_mod, only : add_domain, get_model_variable_indices, &
-                                  get_domain_size, get_varid_from_kind,   &
-                                  state_structure_info, get_kind_index,   &
-                                  get_dart_vector_index, get_num_dims
-
-use netcdf_utilities_mod,  only : nc_add_global_attribute, nc_synchronize_file,        &    
+use             types_mod, only : r4, r8, digits12, SECPERDAY, DEG2RAD, rad2deg, PI,   &
+                                  MISSING_I, MISSING_R8, i4, i8, vtablenamelength
+use      time_manager_mod, only : time_type, set_time, set_date, get_date, get_time,   &
+                                  print_time, print_date,                              &
+                                  set_calendar_type, get_calendar_type,                &
+                                  operator(*),  operator(+), operator(-),              &
+                                  operator(>),  operator(<), operator(/),              &
+                                  operator(/=), operator(<=)
+use          location_mod, only : location_type, set_location, get_location,           &
+                                  write_location, set_location_missing,                &
+                                  loc_get_close_obs => get_close_obs,                  &
+                                  loc_get_close_state => get_close_state,              &
+                                  convert_vertical_obs, convert_vertical_state,        &
+                                  VERTISHEIGHT, VERTISSURFACE, query_location,         &
+                                  set_vertical, get_close_type
+use         utilities_mod, only : register_module, error_handler, do_nml_term,         &
+                                  E_MSG, logfileunit, nmlfileunit, file_to_text,       &
+                                  get_unit, do_output, to_upper, do_nml_file,          &
+                                  find_namelist_in_file, check_namelist_read,          &
+                                  open_file, file_exist, find_textfile_dims, E_ERR,    &
+                                  close_file, string_to_real, string_to_logical
+use        quad_utils_mod, only : quad_interp_handle, set_quad_coords,                 &
+                                  init_quad_interp, finalize_quad_interp,              &
+                                  quad_lon_lat_locate, quad_lon_lat_evaluate,          &
+                                  GRID_QUAD_FULLY_IRREGULAR, QUAD_LOCATED_LON_EDGES,   &
+                                  QUAD_LOCATED_CELL_CENTERS, QUAD_LOCATED_LAT_EDGES
+use          obs_kind_mod, only : QTY_TEMPERATURE, QTY_SALINITY, QTY_DRY_LAND,         &
+                                  QTY_U_CURRENT_COMPONENT, QTY_V_CURRENT_COMPONENT,    &
+                                  QTY_SEA_SURFACE_HEIGHT, get_index_for_quantity
+use   state_structure_mod, only : get_dart_vector_index, get_model_variable_indices,   &
+                                  get_domain_size, get_varid_from_kind,  add_domain,   &
+                                  state_structure_info, get_kind_index, get_num_dims
+use  netcdf_utilities_mod, only : nc_add_global_attribute, nc_synchronize_file,        &    
                                   nc_add_global_creation_time, nc_begin_define_mode,   &
                                   nc_end_define_mode, nc_open_file_readonly,           &    
                                   nc_close_file, nc_get_global_attribute,              &    
                                   nc_get_dimension_size, nc_get_variable, nc_check,    &
                                   nc_get_attribute_from_variable, nc_synchronize_file, &
                                   nc_variable_exists, nc_dimension_exists 
-
-use location_io_mod,      only :  nc_write_location_atts, nc_get_location_varids, &
+use       location_io_mod, only : nc_write_location_atts, nc_get_location_varids,      &
                                   nc_write_location
-
-use default_model_mod,    only : nc_write_model_vars, init_conditions, init_time, &
+use     default_model_mod, only : nc_write_model_vars, init_conditions, init_time,     &
                                   adv_1step
-
-use typesizes
+use     mpi_utilities_mod, only : my_task_id
+use        random_seq_mod, only : random_seq_type, init_random_seq, random_gaussian
+use  ensemble_manager_mod, only : ensemble_type
+use distributed_state_mod, only : get_state, get_state_array
 use netcdf
 
 implicit none
@@ -113,30 +94,29 @@ private
 ! the arguments - they will be called *from* the DART code.
 
 ! routines in this list have code in this module
-public :: get_model_size,                &
-          get_state_meta_data,           &
-          model_interpolate,             &
+public :: get_model_size,                      &
+          get_state_meta_data,                 &
+          model_interpolate,                   &
           shortest_time_between_assimilations, &
-          static_init_model,             &
-          end_model,                     &
-          nc_write_model_atts,           &
-          write_model_time,              &
+          static_init_model,                   &
+          end_model,                           &
+          nc_write_model_atts,                 &
+          write_model_time,                    &
           read_model_time
 
 ! code for these routines are in other modules
-public :: nc_write_model_vars,           &
-          pert_model_copies,             &
-          adv_1step,                     &
-          init_time,                     &
-          init_conditions,               &
-          convert_vertical_obs,          &
-          convert_vertical_state,        &
-          get_close_obs,                 &
+public :: nc_write_model_vars,                 &
+          pert_model_copies,                   &
+          adv_1step,                           &
+          init_time,                           &
+          init_conditions,                     &
+          convert_vertical_obs,                &
+          convert_vertical_state,              &
+          get_close_obs,                       &
           get_close_state
 
 ! not required interfaces but useful for utility programs
-public :: get_time_information, &
-          get_location_from_ijk
+public :: get_time_information
           
 ! version controlled file description for error handling, do not edit
 character(len=256), parameter :: source  = 'ROMS/model_mod.f90'
@@ -145,23 +125,21 @@ character(len=512) :: string1, string2, string3
 logical, save      :: module_initialized = .false.
 
 ! things which can/should be in the model_nml
-!>@todo FIXME ... replace remaining references to VERTISHEIGHT with vert_localization_coord
-logical  :: output_state_vector          = .false.
-integer  :: assimilation_period_days     = 1
-integer  :: assimilation_period_seconds  = 0
-integer  :: vert_localization_coord      = VERTISHEIGHT
-integer  :: debug                        = 0                ! turn up for more and more debug messages
-character(len=256) :: roms_filename      = 'roms_input.nc'
+logical  :: output_state_vector         = .false.
+integer  :: assimilation_period_days    = 1
+integer  :: assimilation_period_seconds = 0
+integer  :: vert_localization_coord     = VERTISHEIGHT
+integer  :: debug                       = 0                ! turn up for more and more debug messages
+character(len=256) :: roms_filename     = 'roms_input.nc'
 
 ! DART contents are specified in the input.nml:&model_nml namelist.
-!>@todo  NF90_MAX_NAME is 256 ... this makes the namelist output unreadable
-integer, parameter              :: MAX_STATE_VARIABLES                            = 8
-integer, parameter              :: table_columns                                  = 5
-character(len=vtablenamelength) :: variables(MAX_STATE_VARIABLES * table_columns) = ' '
-character(len=vtablenamelength) :: var_names(MAX_STATE_VARIABLES)                 = ' '
-logical                         :: update_list(MAX_STATE_VARIABLES)               = .FALSE.
-integer                         :: kind_list(MAX_STATE_VARIABLES)                 = MISSING_I
-real(r8)                        :: clamp_vals(MAX_STATE_VARIABLES, 2)             = MISSING_R8
+integer, parameter              :: MAX_STATE_VARIABLES                          = 8
+integer, parameter              :: table_columns                                = 5
+character(len=vtablenamelength) :: variables(MAX_STATE_VARIABLES*table_columns) = ' '
+character(len=vtablenamelength) :: var_names(MAX_STATE_VARIABLES)               = ' '
+logical                         :: update_list(MAX_STATE_VARIABLES)             = .FALSE.
+integer                         :: kind_list(MAX_STATE_VARIABLES)               = MISSING_I
+real(r8)                        :: clamp_vals(MAX_STATE_VARIABLES, 2)           = MISSING_R8
 
 namelist /model_nml/            &
    assimilation_period_days,    &
@@ -171,18 +149,18 @@ namelist /model_nml/            &
    debug,                       &
    variables
 
-integer :: nfields ! This is the number of variables in the DART state vector.
+integer :: nfields ! This is the number of variables in the DART state vector
 integer :: domid   ! global variable for state_structure_mod routines
 
+! Interpolation grid handles 
 type(quad_interp_handle) :: interp_t_grid, &
                             interp_u_grid, &
                             interp_v_grid
 
 
 ! Grid parameters - the values will be read from a
-! standard ROMS namelist and filled in here.
-
-! nx, ny and nz are the size of the rho grids.
+! standard ROMS namelist and filled in here
+! Nx, Ny and Nz are the size of the rho grids
 integer :: Nx = -1, Ny = -1, Nz = -1
 integer :: Nu = -1, Nv = -1, Nw = -1
 integer :: Nxi_rho
@@ -194,9 +172,9 @@ integer :: Neta_v
 integer :: Ns_rho
 integer :: Ns_w
 
-integer  :: Nc = 4
-integer  :: Nd = 3
-real(r8) :: Zm = -5000.0_r8
+integer  :: Nc = 4          ! number of corners of the quad for interpolation
+integer  :: Nd = 3          ! 3D location for the obs
+real(r8) :: Zm = -5000.0_r8 ! a masking factor to account for land
 
 ! model_interpolate failure codes
 integer, parameter :: QUAD_LOCATE_FAILED   = 13
@@ -220,21 +198,17 @@ integer         :: model_size    ! the state vector length
 
 contains
 
-!-----------------------------------------------------------------------
-! All the REQUIRED interfaces come first - by convention.
-!-----------------------------------------------------------------------
 
 !-----------------------------------------------------------------------
-!>
-!> Called to do one time initialization of the model.
-!> In this case, it reads in the grid information, the namelist
-!> containing the variables of interest, where to get them, their size,
-!> their associated DART KIND, etc.
-!>
-!> In addition to harvesting the model metadata (grid,
-!> desired model advance step, etc.), it also fills a structure
-!> containing information about what variables are where in the DART
-!> framework.
+! Called to do one time initialization of the model.
+! In this case, it reads in the grid information, the namelist
+! containing the variables of interest, where to get them, their size,
+! their associated DART quantity, etc.
+!
+! In addition to harvesting the model metadata (grid,
+! desired model advance step, etc.), it also fills a structure
+! containing information about what variables are where in the DART
+! framework.
 
 subroutine static_init_model()
 
@@ -249,15 +223,12 @@ type(time_type) :: model_time
 
 if ( module_initialized ) return
 
-! The Plan:
-!
 ! * read in the grid sizes from grid file
 ! * allocate space, and read in actual grid values
 ! * figure out model timestep
-! * Compute the model size.
-! * set the index numbers where the field types change
+! * Compute the model size
 
-! Print module information to log file and stdout.
+! Print module information to log file
 call register_module(source)
 
 module_initialized = .true.
@@ -274,7 +245,7 @@ if (do_nml_term()) write(     *     , nml=model_nml)
 model_timestep = set_model_time_step()
 call get_time(model_timestep, ss, dd)
 
-write(string1, *)'Assimilation period is ', dd, ' days ', ss, ' seconds'
+write(string1, *) 'Assimilation period is ', dd, ' days ', ss, ' seconds'
 call error_handler(E_MSG, routine, string1, source)
 
 ncid = nc_open_file_readonly(roms_filename, routine)
@@ -291,8 +262,12 @@ call get_grid()
 ! parse_variable_input() fills var_names, kind_list, clamp_vals, update_list
 call parse_variable_input(variables, nfields)
 
-domid = add_domain(roms_filename, nfields, &
-                   var_names, kind_list, clamp_vals, update_list )
+domid = add_domain(roms_filename, & 
+                         nfields, &
+                       var_names, &
+                       kind_list, &
+                      clamp_vals, &
+                     update_list)
 
 if (debug > 0) call state_structure_info(domid)
 
@@ -302,44 +277,35 @@ model_size = get_domain_size(domid)
 
 call setup_interpolation()
 
-! This was needed in previous versions for scripting 
-! purposes to know how long to advance ROMS.
-! Deactivating for now
-! call write_roms_time_information(model_time)
-
 end subroutine static_init_model
 
 
 !-----------------------------------------------------------------------
-!>
-!> Returns the size of the DART state vector (i.e. model) as an integer.
-!> Required for all applications.
-!>
+! Returns the size of the DART state vector (i.e. model) as an integer.
+! Required for all applications.
 
 function get_model_size()
 
 integer(i8) :: get_model_size
 
-if ( .not. module_initialized ) call static_init_model
+if (.not. module_initialized) call static_init_model
 
 get_model_size = model_size
 
 end function get_model_size
 
 
-
 !-----------------------------------------------------------------------
-!> Given an integer index into the state vector structure, returns the
-!> associated location. A second intent(out) optional argument kind
-!> can be returned if the model has more than one type of field (for
-!> instance temperature and zonal wind component). This interface is
-!> required for all filter applications as it is required for computing
-!> the distance between observations and state variables.
-!>
-!> @param index_in the index into the DART state vector
-!> @param location the location at that index
-!> @param var_type the DART KIND at that index
-!>
+! Given an integer index into the state vector structure, returns the
+! associated location. A second intent(out) optional argument quantity
+! can be returned if the model has more than one type of field (for
+! instance temperature and zonal wind component). This interface is
+! required for all filter applications as it is required for computing
+! the distance between observations and state variables.
+!
+! index_in: the index into the DART state vector
+! location: the location at that index
+! qty:      the DART QUANTITY at that index
 
 subroutine get_state_meta_data(index_in, location, qty)
 
@@ -348,11 +314,10 @@ type(location_type), intent(out) :: location
 integer, optional,   intent(out) :: qty
 
 ! Local variables
-
 integer  :: iloc, jloc, kloc
 integer  :: myvarid, myqty
 
-if ( .not. module_initialized ) call static_init_model
+if (.not. module_initialized) call static_init_model
 
 call get_model_variable_indices(index_in, iloc, jloc, kloc, var_id=myvarid)
 
@@ -365,7 +330,7 @@ elseif (myqty == QTY_V_CURRENT_COMPONENT) then
    location = set_location(VLON(iloc,jloc), VLAT(iloc,jloc), VDEP(iloc,jloc,kloc), VERTISHEIGHT)
 
 elseif (myqty == QTY_SEA_SURFACE_HEIGHT) then
-   ! TODO: So, because we are also doing waves and tides SSH (or zeta) could have a positive depth 
+   ! TODO: So, because we are also doing waves and tides SSH (or zeta) could have a negative depth 
    ! Need to check this down the line
    location = set_location(TLON(iloc,jloc), TLAT(iloc,jloc), 0.0_r8, VERTISSURFACE)
 
@@ -399,7 +364,7 @@ end subroutine get_state_meta_data
 ! expected_obs: Estimated value of the DART state at the location
 !               of interest (the interpolated value).
 ! istatus:      Interpolation status ... 0 == success, /=0 is a failure
-!
+
 subroutine model_interpolate(state_handle, ens_size, location, qty, expected_obs, istatus)
 
 type(ensemble_type), intent(in)  :: state_handle
@@ -410,18 +375,18 @@ real(r8),            intent(out) :: expected_obs(:)
 integer,             intent(out) :: istatus(:)
 
 ! ---- Local
-integer  :: varid, lstatus
-integer  :: qstatus, vstatus 
-integer  :: sshid, salid, i
-integer  :: lon_c(Nc), lat_c(Nc)  ! lon and lat indices of the 4 quad corners
-real(r8) :: pdbar(ens_size)       ! Depth of input point converted from (m) to (dbars)
-real(r8) :: expected_T(ens_size)  ! Ensemble of expected values for potential temperature
-real(r8) :: expected_S(ens_size)  ! Ensemble of expected values for salinity
-real(r8) :: lon_lat_vrt(Nd)       ! lon, lat, vert of the point to interpolate
-real(r8) :: corners(Nc, ens_size) ! State values at the quad corners
-real(r8) :: SSHcorn(Nc, ens_size) ! SSH values at the quad corners
-integer(i8) :: dartidx            ! Index into the DART state
-logical  :: on_land              
+integer     :: varid, lstatus
+integer     :: qstatus, vstatus 
+integer     :: sshid, salid, i
+integer     :: lon_c(Nc), lat_c(Nc)  ! lon and lat indices of the 4 quad corners
+real(r8)    :: pdbar(ens_size)       ! Depth of input point converted from (m) to (dbars)
+real(r8)    :: expected_T(ens_size)  ! Ensemble of expected values for potential temperature
+real(r8)    :: expected_S(ens_size)  ! Ensemble of expected values for salinity
+real(r8)    :: lon_lat_vrt(Nd)       ! lon, lat, vert of the point to interpolate
+real(r8)    :: corners(Nc, ens_size) ! State values at the quad corners
+real(r8)    :: SSHcorn(Nc, ens_size) ! SSH values at the quad corners
+integer(i8) :: dartidx               ! Index into the DART state
+logical     :: on_land              
 
 
 type(quad_interp_handle) :: interp
@@ -458,7 +423,7 @@ if (lstatus /= 0) then
    return 
 endif
 
-if (debug>1) then 
+if (debug > 0) then 
    do i = 1, Nc
       write(*, '(A, i1, A, i4, A, i4, A, f10.6, A, f10.6, A)') &
                'Corner #', i, ': [', lon_c(i), ',', lat_c(i), '] -> [', &
@@ -483,6 +448,7 @@ do i = 1, Nc
 enddo
 
 ! Find the state at the four corners of the quad
+! No vertical interpolation for SSH
 if (qty == QTY_SEA_SURFACE_HEIGHT) then
    ! TODO: Any other surface obs? Maybe anomalies?  
    ! For now, the assumption is that we're working with history files
@@ -493,12 +459,10 @@ if (qty == QTY_SEA_SURFACE_HEIGHT) then
    call quad_lon_lat_evaluate(interp, lon_lat_vrt(1), lon_lat_vrt(2), &
                               lon_c, lat_c, ens_size, SSHcorn,        & 
                               expected_obs, qstatus)
-   if (qstatus /= 0) then 
-      istatus = SSH_QUAD_EVAL_FAILED
-      return 
-   endif
+   istatus = 0
+   if (qstatus /= 0) istatus = SSH_QUAD_EVAL_FAILED
+   return
 endif
-
 
 ! If the qty is not at the surface, then 
 ! we need to do some vertical interpolation 
@@ -515,8 +479,12 @@ call quad_lon_lat_evaluate(interp, lon_lat_vrt(1), lon_lat_vrt(2), &
                            lon_c, lat_c, ens_size, corners,        & 
                            expected_obs, qstatus)
 
+if (qstatus /= 0) then
+   istatus = QUAD_EVALUATE_FAILED
+   return
+endif
+
 if(qty == QTY_TEMPERATURE) then
-  print *, 'Salinity Interpolation:'
   ! Set the potential temperature ensemble values 
   expected_T = expected_obs
 
@@ -535,56 +503,44 @@ if(qty == QTY_TEMPERATURE) then
                              lon_c, lat_c, ens_size, corners,        &
                              expected_S, qstatus)
 
+  if (qstatus /= 0) then
+     istatus = QUAD_EVALUATE_FAILED
+     return
+  endif
+
   ! Deduce the in-situ temperature values
   expected_obs = sensible_temp(expected_T, expected_S, pdbar) 
 endif
 
-if (qstatus /= 0) then
-   istatus = QUAD_EVALUATE_FAILED
-   return
-endif
-
 istatus = 0
-
-! check z (+ve 0 -ve)
-! clean model_mod (netcdf)
-! remove old interp routines
 
 end subroutine model_interpolate
 
 
 !-----------------------------------------------------------------------
-!
 ! Returns the the time step of the model; the smallest increment in
 ! time that the model is capable of advancing the ROMS state.
-!
 
 function shortest_time_between_assimilations()
 
 type(time_type) :: shortest_time_between_assimilations
 
-if ( .not. module_initialized ) call static_init_model
+if (.not. module_initialized) call static_init_model
 
 shortest_time_between_assimilations = model_timestep
 
 end function shortest_time_between_assimilations
 
 
-
 !-----------------------------------------------------------------------
-!>
-!> Writes the model-specific attributes to a DART 'diagnostic' netCDF file.
-!> This includes coordinate variables and some metadata, but NOT the
-!> actual DART state.
-!>
-!> @param ncid the netCDF handle of the DART diagnostic file opened by
-!>                 assim_model_mod:init_diag_output
-!> @param model_writes_state have the state structure write out all of the
-!>                 state variables
+! Writes the model-specific attributes to a DART 'diagnostic' netCDF file.
+! This includes coordinate variables and some metadata, but NOT the
+! actual DART state.
+!
+! ncid the netCDF handle of the DART diagnostic file opened by
+!                 assim_model_mod:init_diag_output
 
 subroutine nc_write_model_atts(ncid, domain_id)
-
-character(len=*), parameter :: routine = 'nc_write_model_atts'
 
 integer, intent(in) :: ncid      ! netCDF file identifier
 integer, intent(in) :: domain_id
@@ -598,208 +554,26 @@ integer :: nsrhoDimID, nswDimID
 integer :: VarID
 
 ! local variables
-
 character(len=256) :: filename
 
-if ( .not. module_initialized ) call static_init_model
-
-! we only have a netcdf handle here so we do not know the filename
-! or the fortran unit number.  but construct a string with at least
-! the netcdf handle, so in case of error we can trace back to see
-! which netcdf file is involved.
-
-write(filename,*) 'ncid', ncid
+if (.not. module_initialized) call static_init_model
 
 ! Write Global Attributes
-
 call nc_begin_define_mode(ncid)
-
 call nc_add_global_creation_time(ncid)
-
 call nc_add_global_attribute(ncid, "model_source", source)
-
 call nc_add_global_attribute(ncid, "model", "ROMS")
-
-! We need to output the grid information
-! Define the new dimensions IDs
-
-call nc_check(nf90_def_dim(ncid, name='xi_rho',  len = Nxi_rho, &
-     dimid = nxirhoDimID),routine, 'xi_rho def_dim '//trim(filename))
-
-call nc_check(nf90_def_dim(ncid, name='eta_rho', len = Neta_rho,&
-     dimid = netarhoDimID),routine, 'eta_rho def_dim '//trim(filename))
-
-call nc_check(nf90_def_dim(ncid, name='s_rho',   len = Ns_rho,&
-     dimid = nsrhoDimID),routine, 's_rho def_dim '//trim(filename))
-
-call nc_check(nf90_def_dim(ncid, name='s_w',   len = Ns_w,&
-     dimid = nswDimID),routine, 's_w def_dim '//trim(filename))
-
-call nc_check(nf90_def_dim(ncid, name='xi_u',    len = Nxi_u,&
-     dimid = nxiuDimID),routine, 'xi_u def_dim '//trim(filename))
-
-call nc_check(nf90_def_dim(ncid, name='xi_v',    len = Nxi_v,&
-     dimid = nxivDimID),routine, 'xi_v def_dim '//trim(filename))
-
-call nc_check(nf90_def_dim(ncid, name='eta_u',   len = Neta_u,&
-     dimid = netauDimID),routine, 'eta_u def_dim '//trim(filename))
-
-call nc_check(nf90_def_dim(ncid, name='eta_v',   len = Neta_v,&
-     dimid = netavDimID),routine, 'eta_v def_dim '//trim(filename))
-
-! Create the Coordinate Variables and give them Attributes
-! The values will be added in a later block of code.
-
-call nc_check(nf90_def_var(ncid,name='lon_rho', xtype=nf90_double, &
-              dimids=(/ nxirhoDimID, netarhoDimID /), varid=VarID),&
-              routine, 'lon_rho def_var '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'rho longitudes'), &
-              routine, 'lon_rho long_name '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'units', 'degrees_east'), &
-              routine, 'lon_rho units '//trim(filename))
-
-call nc_check(nf90_def_var(ncid,name='lat_rho', xtype=nf90_double, &
-              dimids=(/ nxirhoDimID, netarhoDimID /), varid=VarID),&
-              routine, 'lat_rho def_var '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'rho latitudes'), &
-              routine, 'lat_rho long_name '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'units', 'degrees_north'), &
-              routine, 'lat_rho units '//trim(filename))
-
-call nc_check(nf90_def_var(ncid,name='lon_u', xtype=nf90_double, &
-              dimids=(/ nxiuDimID, netauDimID /), varid=VarID),&
-              routine, 'lon_u def_var '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'u longitudes'), &
-              routine, 'lon_u long_name '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'units', 'degrees_east'), &
-              routine, 'lon_u units '//trim(filename))
-
-call nc_check(nf90_def_var(ncid,name='lat_u', xtype=nf90_double, &
-              dimids=(/ nxiuDimID, netauDimID /), varid=VarID),&
-              routine, 'lat_u def_var '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'u latitudes'), &
-              routine, 'lat_u long_name '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'units', 'degrees_north'), &
-              routine, 'lat_u units '//trim(filename))
-
-call nc_check(nf90_def_var(ncid,name='lon_v', xtype=nf90_double, &
-              dimids=(/ nxivDimID, netavDimID /), varid=VarID),&
-              routine, 'lon_v def_var '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'v longitudes'), &
-              routine, 'lon_v long_name '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'units', 'degrees_east'), &
-              routine, 'lon_v units '//trim(filename))
-
-call nc_check(nf90_def_var(ncid,name='lat_v', xtype=nf90_double, &
-              dimids=(/ nxivDimID, netavDimID /), varid=VarID),&
-              routine, 'lat_v def_var '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'v latitudes'), &
-              routine, 'lat_v long_name '//trim(filename))
-call nc_check(nf90_put_att(ncid,  VarID, 'units', 'degrees_north'), &
-              routine, 'lat_v units '//trim(filename))
-
-!call nc_check(nf90_def_var(ncid,name='z_rho', xtype=nf90_double, &
-!              dimids=(/ nxirhoDimID, netarhoDimID, nsrhoDimID /), varid=VarID),&
-!              routine, 'z_rho def_var '//trim(filename))
-!call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'z at rho'), &
-!              routine, 'z_rho long_name '//trim(filename))
-!call nc_check(nf90_put_att(ncid,  VarID, 'units', 'm'), &
-!              routine, 'z_rho units '//trim(filename))
-
-!call nc_check(nf90_def_var(ncid,name='z_u', xtype=nf90_double, &
-!              dimids=(/ nxiuDimID, netauDimID, nsrhoDimID /), varid=VarID),&
-!              routine, 'z_u def_var '//trim(filename))
-!call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'z at rho'), &
-!              routine, 'z_u long_name '//trim(filename))
-!call nc_check(nf90_put_att(ncid,  VarID, 'units', 'm'), &
-!              routine, 'z_u units '//trim(filename))
-
-!call nc_check(nf90_def_var(ncid,name='z_v', xtype=nf90_double, &
-!              dimids=(/ nxivDimID, netavDimID, nsrhoDimID /), varid=VarID),&
-!              routine, 'z_v def_var '//trim(filename))
-!call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'z at rho'), &
-!              routine, 'z_v long_name '//trim(filename))
-!call nc_check(nf90_put_att(ncid,  VarID, 'units', 'm'), &
-!              routine, 'z_v units '//trim(filename))
-
-!call nc_check(nf90_def_var(ncid,name='z_w', xtype=nf90_double, &
-!              dimids=(/ nxirhoDimID, netarhoDimID, nswDimID /), varid=VarID),&
-!              routine, 'z_w def_var '//trim(filename))
-!call nc_check(nf90_put_att(ncid,  VarID, 'long_name', 'z at rho'), &
-!              routine, 'z_w long_name '//trim(filename))
-!call nc_check(nf90_put_att(ncid,  VarID, 'units', 'm'), &
-!              routine, 'z_w units '//trim(filename))
-
-! Finished with dimension/variable definitions, must end 'define' mode to fill.
-
 call nc_end_define_mode(ncid)
-
-! Fill the coordinate variable values
-
-! the RHO grid
-
-call nc_check(NF90_inq_varid(ncid, 'lon_rho', VarID), &
-              routine, 'lon_rho inq_varid '//trim(filename))
-call nc_check(nf90_put_var(ncid, VarID, TLON ), &
-              routine, 'lon_rho put_var '//trim(filename))
-
-call nc_check(NF90_inq_varid(ncid, 'lat_rho', VarID), &
-              routine, 'lat_rho inq_varid '//trim(filename))
-call nc_check(nf90_put_var(ncid, VarID, TLAT ), &
-              routine, 'lat_rho put_var '//trim(filename))
-
-!call nc_check(NF90_inq_varid(ncid, 'z_rho', VarID), &
-!              routine, 'z_rho inq_varid '//trim(filename))
-!call nc_check(nf90_put_var(ncid, VarID, TDEP ), &
-!              routine, 'z_rho put_var '//trim(filename))
-
-! the U grid
-
-call nc_check(NF90_inq_varid(ncid, 'lon_u', VarID), &
-              routine, 'lon_u inq_varid '//trim(filename))
-call nc_check(nf90_put_var(ncid, VarID, ULON ), &
-              routine, 'lon_u put_var '//trim(filename))
-
-call nc_check(NF90_inq_varid(ncid, 'lat_u', VarID), &
-              routine, 'lat_u inq_varid '//trim(filename))
-call nc_check(nf90_put_var(ncid, VarID, ULAT ), &
-              routine, 'lat_u put_var '//trim(filename))
-
-!call nc_check(NF90_inq_varid(ncid, 'z_u', VarID), &
-!              routine, 'z_u inq_varid '//trim(filename))
-!call nc_check(nf90_put_var(ncid, VarID, UDEP ), &
-!              routine, 'z_u put_var '//trim(filename))
-
-! the V grid
-
-call nc_check(NF90_inq_varid(ncid, 'lon_v', VarID), &
-              routine, 'lon_v inq_varid '//trim(filename))
-call nc_check(nf90_put_var(ncid, VarID, VLON ), &
-              routine, 'lon_v put_var '//trim(filename))
-
-call nc_check(NF90_inq_varid(ncid, 'lat_v', VarID), &
-              routine, 'lat_v inq_varid '//trim(filename))
-call nc_check(nf90_put_var(ncid, VarID, VLAT ), &
-              routine, 'lat_v put_var '//trim(filename))
-
-!call nc_check(NF90_inq_varid(ncid, 'z_v', VarID), &
-!              routine, 'z_v inq_varid '//trim(filename))
-!call nc_check(nf90_put_var(ncid, VarID, VDEP ), &
-!              routine, 'z_v put_var '//trim(filename))
-
-! the W grid
-
-!call nc_check(NF90_inq_varid(ncid, 'z_w', VarID), &
-!              routine, 'z_w inq_varid '//trim(filename))
-!call nc_check(nf90_put_var(ncid, VarID, WDEP ), &
-!              routine, 'z_w put_var '//trim(filename))
 
 ! Flush the buffer and leave netCDF file open
 call nc_synchronize_file(ncid)
 
-
 end subroutine nc_write_model_atts
 
+
+!-----------------------------------------------------------------------
+! Using a pre-defined factor, create ensemble perturbations around 
+! a single state.  
 
 subroutine pert_model_copies(state_ens_handle, ens_size, perturbation_amplitude, interf_provided)
 
@@ -808,15 +582,15 @@ integer,             intent(in)    :: ens_size
 real(r8),            intent(in)    :: perturbation_amplitude
 logical,             intent(out)   :: interf_provided
 
-integer     :: var_type
-integer     :: j,i 
-integer(i8) :: dart_index
+integer             :: var_type
+integer             :: j,i 
+integer(i8)         :: dart_index
 type(location_type) :: location
 
 ! Storage for a random sequence for perturbing a single initial state
 type(random_seq_type) :: random_seq
 
-if ( .not. module_initialized ) call static_init_model
+if (.not. module_initialized) call static_init_model
 
 interf_provided = .true.
 
@@ -824,146 +598,132 @@ interf_provided = .true.
 call init_random_seq(random_seq, my_task_id())
 
 ! Perturb the salinity and temperature fields
-
-do i=1,state_ens_handle%my_num_vars
+do i = 1, state_ens_handle%my_num_vars
    dart_index = state_ens_handle%my_vars(i)
    call get_state_meta_data(dart_index, location, var_type)
+
    if (var_type == QTY_TEMPERATURE .or. var_type == QTY_SALINITY) then
-      do j=1, ens_size
+      do j = 1, ens_size
          state_ens_handle%copies(j,i) = random_gaussian(random_seq, &
-            state_ens_handle%copies(j,i), &
-            perturbation_amplitude)
+            state_ens_handle%copies(j,i), perturbation_amplitude)
       enddo
    endif
+
 enddo
 
 end subroutine pert_model_copies
 
+
 !-----------------------------------------------------------------------
-!> writes the time of the current state and (optionally) the time
-!> to be conveyed to ROMS to dictate the length of the forecast.
-!> This file is then used by scripts to modify the ROMS run.
-!> The format in the time information is totally at your discretion.
-!>
-!> @param ncfile_out name of the file
-!> @param model_time the current time of the model state
-!> @param adv_to_time the time in the future of the next assimilation.
-!>
+! writes the time of the current state and (optionally) the time
+! to be conveyed to ROMS to dictate the length of the forecast.
+! This file is then used by scripts to modify the ROMS run.
+! The format in the time information is totally at your discretion.
+!
+! ncfile_out name of the file
+! model_time the current time of the model state
+! adv_to_time the time in the future of the next assimilation.
 
 subroutine write_model_time(ncid, model_time, adv_to_time)
+
+character(len=*), parameter :: routine = 'write_model_time'
+
 integer,         intent(in)           :: ncid
 type(time_type), intent(in)           :: model_time
 type(time_type), intent(in), optional :: adv_to_time
 
-integer :: io, varid, seconds, days
+integer         :: io, varid, seconds, days
 type(time_type) :: origin_time, deltatime
 real(digits12)  :: run_duration
 
-if ( .not. module_initialized ) call static_init_model
+if (.not. module_initialized) call static_init_model
 
 if (present(adv_to_time)) then
    string3 = time_to_string(adv_to_time)
-   write(string1,*)'ROMS/DART not configured to advance ROMS.'
-   write(string2,*)'called with optional advance_to_time of'
-   call error_handler(E_ERR, 'write_model_time', string1, &
+   
+   write(string1, *) 'ROMS/DART not configured to advance ROMS.'
+   write(string2, *) 'called with optional advance_to_time of'
+   
+   call error_handler(E_ERR, routine, string1, &
               source, text2=string2,text3=string3)
 endif
 
 ! If the ocean_time variable exists, we are updating a ROMS file,
 ! if not ... must be updating a DART diagnostic file.
 
-io = nf90_inq_varid(ncid,'ocean_time',varid)
+io = nf90_inq_varid(ncid, 'ocean_time', varid)
 if (io == NF90_NOERR) then
    call get_time_information('unknown', ncid, 'ocean_time', 'ocean_time', &
                 myvarid=varid, origin_time=origin_time)
    deltatime = model_time - origin_time
    call get_time(deltatime, seconds, days)
    run_duration = real(days,digits12)*86400.0_digits12 + real(seconds,digits12)
-   call nc_check(nf90_put_var(ncid, varid, run_duration), 'write_model_time', 'put_var')
+   call nc_check(nf90_put_var(ncid, varid, run_duration), routine, 'put_var')
    return
 endif
 
-io = nf90_inq_varid(ncid,'time',varid)
+io = nf90_inq_varid(ncid, 'time', varid)
 if (io == NF90_NOERR) then
    call get_time_information('unknown', ncid, 'time', 'time', &
                 myvarid=varid, origin_time=origin_time)
    deltatime = model_time - origin_time
    call get_time(deltatime, seconds, days)
    run_duration = real(days,digits12)*86400.0_digits12 + real(seconds,digits12)
-   call nc_check(nf90_put_var(ncid, varid, run_duration), 'write_model_time', 'put_var')
+   call nc_check(nf90_put_var(ncid, varid, run_duration), routine, 'put_var')
    return
 endif
 
 end subroutine write_model_time
 
+
 !--------------------------------------------------------------------
-!>
-!> read the time from the input file
-!>
-!> @param filename name of file that contains the time
-!>
+! read the time from the input file
+! filename name of file that contains the time
 
 function read_model_time(filename)
+
+character(len=*), parameter :: routine = 'read_model_time'
 
 character(len=*), intent(in) :: filename
 type(time_type)              :: read_model_time
 
 integer :: ncid
 
-if ( .not. module_initialized ) call static_init_model
+if (.not. module_initialized) call static_init_model
 
-if ( .not. file_exist(filename) ) then
+if (.not. file_exist(filename)) then
    write(string1,*) 'cannot open file ', trim(filename),' for reading.'
-   call error_handler(E_ERR,'read_model_time', string1, source)
+   call error_handler(E_ERR, routine, string1, source)
 endif
 
-call nc_check( nf90_open(trim(filename), NF90_NOWRITE, ncid), &
-                  'read_model_time', 'open '//trim(filename))
+ncid = nc_open_file_readonly(trim(filename), routine)
 
 call get_time_information(filename, ncid, 'ocean_time', 'ocean_time', last_time=read_model_time)
-
-call nc_check( nf90_close(ncid), 'read_model_time', 'close '//trim(filename))
+call nc_close_file(ncid, routine)
 
 end function read_model_time
 
 
-
 !-----------------------------------------------------------------------
-! The remaining (private) interfaces come last.
-! None of the private interfaces need to call static_init_model()
-!-----------------------------------------------------------------------
-
-
-!-----------------------------------------------------------------------
-!>
-!> Set the desired minimum model advance time. This is generally NOT the
-!> dynamical timestep of the model, but rather the shortest forecast length
-!> you are willing to make. This impacts how frequently the observations
-!> may be assimilated.
-!>
+! Set the desired minimum model advance time. This is generally NOT the
+! dynamical timestep of the model, but rather the shortest forecast length
+! you are willing to make. This impacts how frequently the observations
+! may be assimilated.
 
 function set_model_time_step()
 
 type(time_type) :: set_model_time_step
 
 ! assimilation_period_seconds, assimilation_period_days are from the namelist
-
-!>@todo FIXME make sure set_model_time_step is an integer multiple of
-!> the dynamical timestep or whatever strategy ROMS employs.
-! TJH NHIST*DT ... from the inputfile ... can remove assim_* from DART input namelist
-
-!>@todo FIXME : JPH we should really be getting this from the history file??
 set_model_time_step = set_time(assimilation_period_seconds, assimilation_period_days)
 
 end function set_model_time_step
 
 
 !-----------------------------------------------------------------------
-!>
-!> Read the grid dimensions from the ROMS grid netcdf file.
-!> By reading the dimensions first, we can use them in variable
-!> declarations later - which is faster than using allocatable arrays.
-!>
+! Read the grid dimensions from the ROMS grid netcdf file.
+! By reading the dimensions first, we can use them in variable
+! declarations later - which is faster than using allocatable arrays.
 
 subroutine get_grid_dimensions()
 
@@ -998,22 +758,10 @@ end subroutine get_grid_dimensions
 
 
 !-----------------------------------------------------------------------
-!>
-!> Read the actual grid values from the ROMS netcdf file.
-!>
-!>@todo FIXME:  the original implementation opened 3 different files
-!> to get the grid info - the namelist was:
-!>    roms_ini_filename            = '../data/wc13_ini.nc'
-!>    grid_definition_filename     = '../data/wc13_grd.nc'
-!>    depths_definition_filename   = '../data/wc13_depths.nc'
-!>
-!> these have been consolidated by hernan for the santa cruz version
-!> into a single file.  check with the other rutgers folks to see if
-!> they still need to open 3 different files.  if so, we might need
-!> to restore the 3 namelist items and we can use the same file for
-!> all 3 types of grid info in the first case, and 3 different files
-!> for the second case.
-!>
+! Read the actual grid values from the ROMS netcdf file.
+! We might need to adapt this to allow for leapfrog time stepping
+! The assumption is that we're reading from history files 
+! which only have one time-level. 
 
 subroutine get_grid()
 
@@ -1178,6 +926,7 @@ d = -d
 
 end subroutine compute_physical_depth
 
+
 !-----------------------------------------------------------------------
 ! Using z_rho, compute z_u and z_v
 subroutine U_V_depths()
@@ -1198,6 +947,7 @@ enddo
 
 end subroutine U_V_depths 
 
+
 !-----------------------------------------------------------------------
 ! Apply vertical interpolation using the four corners of the quad
 
@@ -1213,16 +963,15 @@ type(ensemble_type), intent(in) :: state_handle
 real(r8), intent(in)            :: SSHcorn(Nc, ens_size) 
 real(r8), intent(out)           :: corners(Nc, ens_size) ! State values at the quad corners
 
-integer  :: i, ie, il
-integer  :: dstatus, Nl, lz
-integer  :: lev(ens_size, 2)      ! Bottom (1) and Top (2) level indices that bounds point of interest 
-integer  :: levels(2*ens_size)    ! Unique vertical levels across the ensemble
-real(r8) :: depths(Nz)            ! Depths for each ensemble member
-real(r8) :: lev_frc(ens_size)     ! Fractional distances between bot and top 
-real(r8) :: Zvals(Nz, ens_size)   ! All ensemble values to be interpolated
-real(r8) :: tops, bots            ! Ensemble level values
-real(r8) :: bath                  ! Bathymetry at a single point
-
+integer     :: i, ie, il
+integer     :: dstatus, Nl, lz
+integer     :: lev(ens_size, 2)      ! Bottom (1) and Top (2) level indices that bounds point of interest 
+integer     :: levels(2*ens_size)    ! Unique vertical levels across the ensemble
+real(r8)    :: depths(Nz)            ! Depths for each ensemble member
+real(r8)    :: lev_frc(ens_size)     ! Fractional distances between bot and top 
+real(r8)    :: Zvals(Nz, ens_size)   ! All ensemble values to be interpolated
+real(r8)    :: tops, bots            ! Ensemble level values
+real(r8)    :: bath                  ! Bathymetry at a single point
 integer(i8) :: dartidx     
 
 levels = 0
@@ -1268,6 +1017,7 @@ enddo
 
 end subroutine vert_interp
 
+
 !------------------------------------------------------------------
 ! Any model specific distance calcualtion can be done here
 subroutine get_close_obs(gc, base_loc, base_type, locs, loc_qtys, loc_types, &
@@ -1290,6 +1040,7 @@ call loc_get_close_obs(gc, base_loc, base_type, locs, loc_qtys, loc_types, &
                           num_close, close_ind, dist, ens_handle)
 
 end subroutine get_close_obs
+
 
 !------------------------------------------------------------------
 ! Any model specific distance calcualtion can be done here
@@ -1324,9 +1075,11 @@ enddo
 
 end subroutine get_close_state
 
+
 !------------------------------------------------------------
 ! calculate sensible (in-situ) temperature from 
 ! local pressure, salinity, and potential temperature
+
 elemental function sensible_temp(potemp, s, lpres)
 
 real(r8), intent(in)  :: potemp ! potential temperature in C
@@ -1382,8 +1135,8 @@ sensible_temp = t
 
 end function sensible_temp
 
+
 !-----------------------------------------------------------------------
-!
 ! Fill the array of requested variables, dart kinds, possible min/max
 ! values and whether or not to update the field in the output file.
 !
@@ -1416,11 +1169,10 @@ MyLoop : do i = 1, MAX_STATE_VARIABLES
 
    if ( varname == ' ' .or. dartstr == ' ' ) then
       string1 = 'model_nml:model "variables" not fully specified'
-      call error_handler(E_ERR,'parse_variable_input:', string1, source)
+      call error_handler(E_ERR, routine, string1, source)
    endif
 
    ! Make sure DART kind is valid
-
    if( get_index_for_quantity(dartstr) < 0 ) then
       write(string1,'(''there is no quantity <'',a,''> in obs_kind_mod.f90'')') trim(dartstr)
       call error_handler(E_ERR, routine, string1, source)
@@ -1450,25 +1202,21 @@ end subroutine parse_variable_input
 
 
 !-----------------------------------------------------------------------
+! Find the named variable (often 'ocean_time') in a ROMS netCDF file.
+! If it is not found, it is a fatal error.
 !
-!> Find the named variable (often 'ocean_time') in a ROMS netCDF file.
-!> If it is not found, it is a fatal error.
-!>
-!> @param filename the name of the ROMS netCDF file
-!>                 (used to generate useful error messages).
-!> @param ncid the netCDF handle to the ROMS netCDF file.
-!> @param variable name which contains the time
-!> @param calendar the character string indicating the calendar in use
-!> @param last_time_index the value of the last time dimension
-!> @param last_time the time/date of the last time
-!> @param origin_time the base time other times are relative to
-!> @param all_times an array of all times in the variable
-!>
-!>@todo FIXME Make sure the calculation is correct.
-!>  A 64bit real can support whole numbers that overflow a 32 bit integer.
+! filename the name of the ROMS netCDF file
+!                 (used to generate useful error messages).
+! ncid the netCDF handle to the ROMS netCDF file.
+! variable name which contains the time
+! calendar the character string indicating the calendar in use
+! last_time_index the value of the last time dimension
+! last_time the time/date of the last time
+! origin_time the base time other times are relative to
+! all_times an array of all times in the variable
 
 subroutine get_time_information(filename, ncid, var_name, dim_name, myvarid, &
-                    calendar, last_time_index, last_time, origin_time, all_times)
+               calendar, last_time_index, last_time, origin_time, all_times)
 
 character(len=*),            intent(in)  :: filename
 integer,                     intent(in)  :: ncid
@@ -1483,7 +1231,7 @@ type(time_type),   optional, intent(out) :: all_times(:)
 
 character(len=*), parameter   :: routine = 'get_time_information'
 
-integer :: ios, DimID, VarID, dimlen, i
+integer           :: ios, DimID, VarID, dimlen, i
 character(len=64) :: unitstring
 character(len=32) :: calendarstring
 
@@ -1494,8 +1242,6 @@ type(time_type) :: time_offset, base_time
 logical :: offset_in_seconds  ! if .false., assuming offset in days
 
 integer :: original_calendar_type
-
-!>@todo FIXME get the variable length from the varid and remove the need for the dimension name
 
 call nc_check(nf90_inq_dimid(ncid,dim_name,dimid=DimID), &
        routine,'cannot find "'//trim(dim_name)//'" dimension in '//trim(filename))
@@ -1512,10 +1258,10 @@ if (present(myvarid)) myvarid = VarID
 rc = nf90_get_att(ncid, VarID, 'calendar', calendarstring)
 if (rc /= nf90_noerr) calendarstring = 'gregorian'
 
-if (index(calendarstring,'gregorian') == 0) then
-   write(string1,*)'expecting '//trim(var_name)//' calendar of "gregorian"'
-   write(string2,*)'got '//trim(calendarstring)
-   write(string3,*)'from file "'//trim(filename)//'"'
+if (index(calendarstring, 'gregorian') == 0) then
+   write(string1, *) 'expecting '//trim(var_name)//' calendar of "gregorian"'
+   write(string2, *) 'got '//trim(calendarstring)
+   write(string3, *) 'from file "'//trim(filename)//'"'
    call error_handler(E_MSG,routine, string1, &
              source, text2=string2, text3=string3)
 else
@@ -1533,7 +1279,6 @@ if (present(last_time) .or. present(origin_time) .or. present(all_times)) then
 
    ! We need to set the calendar to interpret the time values
    ! do we need to preserve the original calendar setting if there is one?
-
    call set_calendar_type( trim(calendarstring) )
 
    ! Make sure the calendar is expected form
@@ -1548,13 +1293,12 @@ if (present(last_time) .or. present(origin_time) .or. present(all_times)) then
 
    ! decode the start time of the time variable - expecting time to be coded
    ! as an offset to some base
-
    if (unitstring(1:13) == 'seconds since') then
       read(unitstring,'(14x,i4,5(1x,i2))',iostat=ios)year,month,day,hour,minute,second
       if (ios /= 0) then
-         write(string1,*)'Unable to read time variable units. Error status was ',ios
-         write(string2,*)'expected "seconds since YYYY-MM-DD HH:MM:SS"'
-         write(string3,*)'was      "'//trim(unitstring)//'"'
+         write(string1, *) 'Unable to read time variable units. Error status was ',ios
+         write(string2, *) 'expected "seconds since YYYY-MM-DD HH:MM:SS"'
+         write(string3, *) 'was      "'//trim(unitstring)//'"'
          call error_handler(E_ERR, routine, string1, &
                 source, text2=string2, text3=string3)
       endif
@@ -1623,9 +1367,9 @@ endif
 
 end subroutine get_time_information
 
-!-----------------------------------------------------------------------
 
-!> convert a fractional day to a dart time type
+!-----------------------------------------------------------------------
+! convert a fractional day to a dart time type
 
 function convert_to_time_offset(offset, offset_in_seconds)
 
@@ -1651,30 +1395,30 @@ convert_to_time_offset = set_time(some_seconds, some_days)
 
 end function convert_to_time_offset
 
+
 !-----------------------------------------------------------------------
-!>
-!> convert DART time type into a character string with the
-!> format of YYYYMMDDhh ... or DDhh
-!>
-!> @param time_to_string the character string containing the time
-!> @param t the time
-!> @param interval logical flag describing if the time is to be
-!>                 interpreted as a calendar date or a time increment.
-!>                 If the flag is merely present, the time is to be
-!>                 interpreted as an increment and the format is simply
-!>                 DDhh. If the flag is not present, the time is a full
-!>                 calendar (Gregorian) date and will be renedered with
-!>                 the YYYYMMDDhh format.
-!>
+! convert DART time type into a character string with the
+! format of YYYYMMDDhh ... or DDhh
+!
+! time_to_string the character string containing the time
+! t:        the time
+! interval: logical flag describing if the time is to be
+!           interpreted as a calendar date or a time increment.
+!           If the flag is merely present, the time is to be
+!           interpreted as an increment and the format is simply
+!           DDhh. If the flag is not present, the time is a full
+!           calendar (Gregorian) date and will be renedered with
+!           the YYYYMMDDhh format.
 
 function time_to_string(t, interval)
 
-character(len=19)              :: time_to_string
+character(len=*), parameter   :: routine = 'time_to_string'
+
+character(len=19)             :: time_to_string
 type(time_type),   intent(in) :: t
 logical, optional, intent(in) :: interval
 
 ! local variables
-
 integer :: iyear, imonth, iday, ihour, imin, isec
 integer :: ndays, nsecs
 logical :: dointerval
@@ -1691,7 +1435,7 @@ if (dointerval) then
    call get_time(t, nsecs, ndays)
    if (ndays > 99) then
       write(string1, *) 'interval number of days is ', ndays
-      call error_handler(E_ERR,'time_to_string:', 'interval days cannot be > 99', &
+      call error_handler(E_ERR, routine, 'interval days cannot be > 99', &
                          source, text2=string1)
    endif
    ihour = nsecs / 3600
@@ -1699,10 +1443,8 @@ if (dointerval) then
    imin  = nsecs / 60
    nsecs = nsecs - (imin * 60)
    isec  = nsecs
-!   write(time_to_string, '(I2.2,3(A1,I2.2))') &
-!                        ndays, '_', ihour, ':', imin, ':', isec
-   write(time_to_string, '(I2.2,I2.2)') &
-                        ndays, ihour
+   
+   write(time_to_string, '(I2.2,I2.2)') ndays, ihour
 else
    call get_date(t, iyear, imonth, iday, ihour, imin, isec)
    write(time_to_string, '(I4.4,5(A1,I2.2))') &
@@ -1710,270 +1452,6 @@ else
 endif
 
 end function time_to_string
-
-
-!-----------------------------------------------------------------------
-!>
-!> writes the time of the current state and (optionally) the time
-!> to be conveyed to ROMS to dictate the length of the forecast.
-!> This file is then used by scripts to modify the ROMS run.
-!> The format in the time information is totally at your discretion.
-!>
-!> @param model_time the current time of the model state
-!>
-
-subroutine write_roms_time_information( model_time )
-
-character(len=*), parameter   :: routine = 'write_roms_time_information'
-
-type(time_type), intent(in) :: model_time
-
-integer :: iunit, day, second, ios, ncid
-real(digits12) :: dstart
-type(time_type) :: base_time, forecast_time
-
-base_time = model_time
-
-call nc_check(nf90_open(trim(roms_filename), NF90_NOWRITE, ncid), &
-                  routine, 'open '//trim(roms_filename))
-
-call get_time_information(roms_filename, ncid, 'ocean_time', 'ocean_time', origin_time=base_time)
-
-call nc_check(nf90_close(ncid), routine, 'close '//trim(roms_filename))
-
-forecast_time = model_time - base_time
-
-call get_time(forecast_time,second,day)
-
-dstart = real(day,digits12) + second/86400.0_digits12
-
-iunit = open_file('new_dstart.txt', action='write')
-
-write(iunit,'(A,1x,f25.5)', iostat=ios) 'DSTART ', dstart
-if (ios /= 0) then
-   write(string1,*)'Unable to write new DSTART. Error status was ',ios
-   write(string2,*)'dstart = ', dstart
-   call error_handler(E_ERR, routine, string1, source, text2=string2)
-endif
-
-! The next records are totally optional - not checking write status
-write(iunit,'(A,1x,f25.5)') 'ROMS_offset ', dstart*86400.0_digits12
-call print_date(model_time, str='ROMS_date ',iunit=iunit)
-call print_time(model_time, str='DART_time ',iunit=iunit)
-
-string1 = time_to_string(model_time)
-write(iunit,'(A,1x,A)') 'YYYYMMDD',trim(string1)
-
-call close_file(iunit)
-
-end subroutine write_roms_time_information
-
-
-!-----------------------------------------------------------------------
-!>
-!> Returns the lat,lon,depth given a fractional i,j,k and a specified kind
-!>
-!> @param filoc fractional x index
-!> @param fjloc fractional y index
-!> @param fkloc fractional vert index
-!> @param dart_kind
-!> @param locatiation location at fractional i,j,k
-!>
-!>  Each grid cell is oriented in a counter clockwise direction
-!>  for interpolating locations.  First we interpolate in latitude
-!>  and longitude, then interpolate in height.  The hgt of each grid
-!>  cell can very on each interpolation, so we have to be careful how
-!>  we interpolate in the horizontal.  Using the 4 different heights
-!>  and lat_frac, lon_frac, hgt_frac we can do a simple trilinear
-!>  interpolation to find the location given fractional indicies.
-!>
-!>              (i ,j+1) ----- (i+1,j+1)   hgt(1) hgt(2) hgt(3) hgt(4)
-!>               hgt(4)         hgt(3)       |      |      |      |
-!>                 |               |         |      *      |      |
-!>  lon_frac _____ |       X       |         |      |      |      *
-!>                 |               |         |             *      |
-!>                 |               |         *             |
-!>              (i ,j)   ----- (i+1,j)       |
-!>               hgt(1)   |     hgt(2)             * - hgt_frac location
-!>                        |
-!>                     lat_frac
-!>
-!>    ISTATUS : 10 - bad incoming dart_kind
-!>    ISTATUS : 11 - fkloc out of range
-!>    ISTATUS : 12 - filoc or fjloc out of range for u grid
-!>    ISTATUS : 13 - filoc or fjloc out of range for v grid
-!>    ISTATUS : 14 - filoc or fjloc out of range for rho grid
-!>    ISTATUS : 99 - initalized istatus, this should not happen
-
-function get_location_from_ijk(filoc, fjloc, fkloc, dart_kind, location) result(istatus)
-real(r8),            intent(in)  :: filoc
-real(r8),            intent(in)  :: fjloc
-real(r8),            intent(in)  :: fkloc
-integer,             intent(in)  :: dart_kind
-type(location_type), intent(out) :: location
-integer :: istatus ! 0 good, else bad
-
-!integer  :: var_id, iloc, jloc, vloc
-!integer  :: vert_type, my_kind
-!real(r8) :: lon_fract, lat_fract, hgt_fract
-!real(r8) :: lon_val, lat_val, hgt_val, tmp_hgt(2), hgt(4)
-!real(r8), pointer :: mylon(:,:), mylat(:,:), mydep(:,:,:)
-!logical, save :: first_time = .true.
-!
-!
-write(string1,*)'Routine not finished.'
-call error_handler(E_ERR, 'get_location_from_ijk:', string1, source)
-!
-! start out assuming bad istatus
-!istatus  = 99
-!
-!var_id = get_varid_from_kind(domain_id, dart_kind)
-!if (var_id < 0) then
-!  istatus = 10 ! can not find variable id for dart_kind
-!  return
-!endif
-!
-!! check that we have a valid vertical location.
-!! allow obs above the top rho point but below the
-!! surface to be considered at the top rho point.
-!! the commented out code is the test for excluding
-!! obs above the top rho point in addition to obs
-!! below the bottom rho point.
-!!if (fkloc < 0.5 .or. fkloc > Ns_rho - 0.5) then
-!if (fkloc < 0.5 .or. fkloc > Ns_rho) then
-!  istatus = 11
-!  location = set_location_missing()
-!  return
-!endif
-!
-!iloc = FLOOR(filoc)
-!jloc = FLOOR(fjloc)
-!vloc = FLOOR(fkloc)
-!
-!lon_fract = filoc - iloc
-!lat_fract = fjloc - jloc
-!hgt_fract = fkloc - vloc
-!
-!my_kind = get_kind_index(domain_id,var_id)
-!if (my_kind==QTY_U_CURRENT_COMPONENT) then
-!   write(string1,*)'Not interpolating ', get_name_for_quantity(my_kind), ' at the moment.'
-!   write(string2,*)'Need to check that we are using the right grid for location interpolation'
-!   call error_handler(E_ERR, 'get_location_from_ijk:', string1, &
-!                      source, text2=string2)
-!   if (filoc < 1 .or. filoc > Nxi_u-1 .or. &
-!       fjloc < 1 .or. fjloc > Neta_u-1 ) then
-!     istatus = 12
-!     location = set_location_missing()
-!     return
-!   endif
-!   mylon => ULON
-!   mylat => ULAT
-!   mydep => UDEP
-!elseif (my_kind==QTY_V_CURRENT_COMPONENT) then
-!   write(string1,*)'Not interpolating ', get_name_for_quantity(my_kind), ' at the moment.'
-!   write(string2,*)'Need to check that we are using the right grid for location interpolation'
-!   call error_handler(E_ERR, 'get_location_from_ijk:', string1, &
-!                      source, text2=string2)
-!   if (filoc < 1 .or. filoc > Nxi_v-1 .or. &
-!       fjloc < 1 .or. fjloc > Neta_v-1 ) then
-!     istatus = 13
-!     location = set_location_missing()
-!     return
-!   endif
-!   mylon => VLON
-!   mylat => VLAT
-!   mydep => VDEP
-!else  ! Everything else is assumed to be on the rho points
-!   if (filoc < 1 .or. filoc > Nxi_rho-1 .or. &
-!       fjloc < 1 .or. fjloc > Neta_rho-1 ) then
-!
-!     write(*,*)
-!     write(*,*)'filoc, Nxi_rho-1       = ',filoc, Nxi_rho-1
-!     write(*,*)'fjloc, Neta_rho-1      = ',fjloc, Neta_rho-1
-!     write(*,*)'fkloc, vloc, hgt_fract = ',fkloc,vloc,hgt_fract
-!
-!     write(logfileunit,*)
-!     write(logfileunit,*)'filoc, Nxi_rho-1     = ',filoc, Nxi_rho-1
-!     write(logfileunit,*)'fjloc, Neta_rho-1    = ',fjloc, Neta_rho-1
-!     write(logfileunit,*)'fkloc,vloc,hgt_fract = ',fkloc,vloc,hgt_fract
-!
-!     istatus = 14
-!     location = set_location_missing()
-!     return
-!   endif
-!   mylon => TLON
-!   mylat => TLAT
-!   mydep => TDEP
-!endif
-!
-!lon_val = (1.0-lon_fract)*(mylon(iloc,jloc)) + (lon_fract)*(mylon(iloc+1,jloc))
-!lat_val = (1.0-lat_fract)*(mylat(iloc,jloc)) + (lat_fract)*(mylat(iloc  ,jloc+1))
-!
-!if( get_kind_index(domain_id,var_id) == QTY_SEA_SURFACE_HEIGHT ) then
-!   hgt_val    = 0.0_r8
-!   vert_type  = VERTISSURFACE
-!else
-!   if (fkloc > Ns_rho - 0.5) then
-!      ! leave something in the log to remind us we're doing this and
-!      ! make sure it's ok with everyone.
-!      if (first_time) then
-!         call error_handler(E_MSG, 'ROMS model_mod', &
-!           'NOTE: Locations above the top Rho point are moved to that point')
-!         first_time = .false.
-!      endif
-!      ! special case for obs at or closer to surface than top rho point
-!      ! make them 100% at the top point
-!      vloc = vloc - 1
-!      hgt_fract = 1.0_r8
-!   endif
-!
-!   ! fractional heights in the vertical for each corner of the horizontal box
-!   hgt(1) = (1.0-hgt_fract)*(mydep(iloc  ,jloc,  vloc)) + hgt_fract*(mydep(iloc  ,jloc  ,vloc+1))
-!   hgt(2) = (1.0-hgt_fract)*(mydep(iloc+1,jloc  ,vloc)) + hgt_fract*(mydep(iloc+1,jloc  ,vloc+1))
-!   hgt(3) = (1.0-hgt_fract)*(mydep(iloc+1,jloc+1,vloc)) + hgt_fract*(mydep(iloc+1,jloc+1,vloc+1))
-!   hgt(4) = (1.0-hgt_fract)*(mydep(iloc  ,jloc+1,vloc)) + hgt_fract*(mydep(iloc  ,jloc+1,vloc+1))
-!
-!   tmp_hgt(1) = (1.0-lon_fract)*hgt(1) + lon_fract*hgt(2)
-!   tmp_hgt(2) = (1.0-lon_fract)*hgt(4) + lon_fract*hgt(3)
-!
-!   hgt_val   = (1.0-lat_fract)*tmp_hgt(1)+lat_fract*tmp_hgt(2)
-!   vert_type = VERTISHEIGHT
-!endif
-!
-!istatus  = 0
-!location = set_location(lon_val, lat_val, hgt_val, vert_type)
-!
-!if (debug > 5) then
-!   print*,' i,j,k', filoc, fjloc, fkloc
-!
-!   print*,' lon(i  ,j  ), lat(i  ,j  ) : (', mylon(iloc  ,jloc  ),',',mylat(iloc  ,jloc  ),')'
-!   print*,' lon(i+1,j  ), lat(i+1,j  ) : (', mylon(iloc+1,jloc  ),',',mylat(iloc+1,jloc  ),')'
-!   print*,' lon(i+1,j+1), lat(i+1,j+1) : (', mylon(iloc+1,jloc+1),',',mylat(iloc+1,jloc+1),')'
-!   print*,' lon(i  ,j+1), lat(i  ,j+1) : (', mylon(iloc  ,jloc+1),',',mylon(iloc  ,jloc+1),')'
-!   print*,' '
-!   print*,' tmp_hgt(1)  = ', tmp_hgt(1)
-!   print*,' tmp_hgt(2)  = ', tmp_hgt(2)
-!   print*, ' '
-!   print*,' lon_frac    = ', lon_fract
-!   print*,' lat_frac    = ', lat_fract
-!   print*,' hgt_frac    = ', hgt_fract
-!   print*,' '
-!   print*,' lon_val     = ', lon_val
-!   print*,' lat_val     = ', lat_val
-!   print*,' hgt_val     = ', hgt_val
-!   print*,' '
-!   print*,' WDEP(i  , j  , k  )', WDEP(iloc,   jloc  , vloc)
-!   print*,' WDEP(i  , j+1, k  )', WDEP(iloc,   jloc+1, vloc)
-!   print*,' WDEP(i+1, j+1, k  )', WDEP(iloc+1, jloc+1, vloc)
-!   print*,' WDEP(i+1, j  , k  )', WDEP(iloc+1, jloc  , vloc)
-!   print*,' '
-!   print*,' WDEP(i  , j  , k+1)', WDEP(iloc,   jloc  , vloc+1)
-!   print*,' WDEP(i  , j+1, k+1)', WDEP(iloc,   jloc+1, vloc+1)
-!   print*,' WDEP(i+1, j+1, k+1)', WDEP(iloc+1, jloc+1, vloc+1)
-!   print*,' WDEP(i+1, j  , k+1)', WDEP(iloc+1, jloc  , vloc+1)
-!endif
-!
-end function get_location_from_ijk
 
 
 !-----------------------------------------------------------------------
@@ -2007,6 +1485,7 @@ end subroutine setup_interpolation
 
 !------------------------------------------------------------
 ! Returns the appropriate quad_interp handle
+
 function get_interp_handle(qty)
 
 type(quad_interp_handle) :: get_interp_handle
@@ -2022,8 +1501,10 @@ endif
 
 end function
 
+
 !---------------------------------------------------------
 ! Check if we're on the U grid
+
 function on_u_grid(qty)
 
 integer, intent(in) :: qty
@@ -2034,8 +1515,10 @@ if (qty == QTY_U_CURRENT_COMPONENT) on_u_grid = .true.
 
 end function on_u_grid
 
+
 !------------------------------------------------------------
 ! Check if we're on the V grid
+
 function on_v_grid(qty)
 
 integer, intent(in) :: qty
@@ -2046,8 +1529,10 @@ if (qty == QTY_V_CURRENT_COMPONENT) on_v_grid = .true.
 
 end function on_v_grid
 
+
 !----------------------------------------------------------
 ! Check if we're on the T grid
+
 function on_t_grid(qty)
 
 integer, intent(in) :: qty
@@ -2058,6 +1543,7 @@ if (qty == QTY_U_CURRENT_COMPONENT .or. &
     qty == QTY_V_CURRENT_COMPONENT) on_t_grid = .false.
 
 end function on_t_grid
+
 
 !-----------------------------------------------------------
 ! Figure out whether a point is on land or not
@@ -2077,34 +1563,36 @@ endif
 
 end function point_on_land
 
+
 !-----------------------------------------------------------
 ! Figure out whether any part of the quad is on land 
 
-subroutine quad_on_land(qty, lons, lats, status)
+subroutine quad_on_land(qty, lons, lats, lstatus)
 
 integer, intent(in)  :: qty, lons(:), lats(:)
-logical, intent(out) :: status
+logical, intent(out) :: lstatus
 
-status = .false.
+lstatus = .false.
 
 if (on_u_grid(qty)) then 
-   status = UMSK(lons(1), lats(1)) .or. &
-            UMSK(lons(2), lats(2)) .or. &
-            UMSK(lons(3), lats(3)) .or. &
-            UMSK(lons(4), lats(4))
+   lstatus = UMSK(lons(1), lats(1)) .or. &
+             UMSK(lons(2), lats(2)) .or. &
+             UMSK(lons(3), lats(3)) .or. &
+             UMSK(lons(4), lats(4))
 elseif (on_v_grid(qty)) then 
-   status = VMSK(lons(1), lats(1)) .or. &
-            VMSK(lons(2), lats(2)) .or. &
-            VMSK(lons(3), lats(3)) .or. &
-            VMSK(lons(4), lats(4))
+   lstatus = VMSK(lons(1), lats(1)) .or. &
+             VMSK(lons(2), lats(2)) .or. &
+             VMSK(lons(3), lats(3)) .or. &
+             VMSK(lons(4), lats(4))
 else 
-   status = TMSK(lons(1), lats(1)) .or. &
-            TMSK(lons(2), lats(2)) .or. &
-            TMSK(lons(3), lats(3)) .or. &
-            TMSK(lons(4), lats(4))
+   lstatus = TMSK(lons(1), lats(1)) .or. &
+             TMSK(lons(2), lats(2)) .or. &
+             TMSK(lons(3), lats(3)) .or. &
+             TMSK(lons(4), lats(4))
 endif   
 
 end subroutine quad_on_land
+
 
 !-----------------------------------------------------------------------
 ! Does any shutdown and clean-up needed for model.
@@ -2165,6 +1653,7 @@ endif
 
 end subroutine depth_bounds
 
+
 !-----------------------------------------------------------------------
 ! Given a set of bottom and top levels for each ensemble member, 
 ! what is the list of unique vertical levels across the ensemble?
@@ -2207,6 +1696,7 @@ subroutine unique_levels(val1, val2, N, val_un, N_un)
   N_un = count
 end subroutine unique_levels
 
+
 !-----------------------------------------------------------------------
 ! Does any shutdown and clean-up needed for model.
 
@@ -2228,17 +1718,12 @@ if (allocated(TMSK)) deallocate(TMSK)
 if (allocated(UMSK)) deallocate(UMSK)
 if (allocated(VMSK)) deallocate(VMSK)
 
+deallocate(h, Cr, sr)  
+
 end subroutine end_model
 
 
 !===================================================================
 ! End of model_mod
 !===================================================================
-
 end module model_mod
-
-! <next few lines under version control, do not edit>
-! $URL$
-! $Id$
-! $Revision$
-! $Date$
