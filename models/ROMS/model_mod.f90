@@ -157,21 +157,11 @@ type(quad_interp_handle) :: interp_t_grid, &
                             interp_u_grid, &
                             interp_v_grid
 
-
 ! Grid parameters - the values will be read from a
 ! standard ROMS namelist and filled in here
 ! Nx, Ny and Nz are the size of the rho grids
-integer :: Nx = -1, Ny = -1, Nz = -1
-integer :: Nu = -1, Nv = -1, Nw = -1
-integer :: Nxi_rho
-integer :: Nxi_u
-integer :: Nxi_v
-integer :: Neta_rho
-integer :: Neta_u
-integer :: Neta_v
-integer :: Ns_rho
-integer :: Ns_w
-
+integer  :: Nx = -1, Ny = -1, Nz = -1
+integer  :: Nu = -1, Nv = -1, Nw = -1
 integer  :: Nc = 4          ! number of corners of the quad for interpolation
 integer  :: Nd = 3          ! 3D location for the obs
 real(r8) :: Zm = -5000.0_r8 ! a masking factor to account for land
@@ -189,12 +179,12 @@ real(r8), allocatable :: ULAT(:,:), ULON(:,:), UDEP(:,:,:), &
                          VLAT(:,:), VLON(:,:), VDEP(:,:,:)
 logical, allocatable  :: TMSK(:,:), UMSK(:,:), VMSK(:,:)
 real(r8), allocatable :: h(:,:), Cr(:), sr(:)  
-real(r8)              :: hc ! critical depth (m)
-integer               :: Vt ! transformation formula from ROMS
+real(r8)              :: hc         ! critical depth (m)
+integer               :: Vt         ! transformation formula from ROMS
 integer               :: ix, iy, ik
 
 type(time_type) :: model_timestep
-integer         :: model_size    ! the state vector length
+integer         :: model_size       ! the state vector length
 
 contains
 
@@ -727,8 +717,12 @@ end function set_model_time_step
 
 subroutine get_grid_dimensions()
 
-integer :: ncid
 character(len=*), parameter :: routine = 'get_grid_dimensions'
+
+integer :: ncid
+integer :: Nxi_rho, Nxi_u, Nxi_v
+integer :: Neta_rho, Neta_u, Neta_v
+integer :: Ns_rho, Ns_w
 
 ! Read the (static) grid dimensions from the ROMS grid file.
 ncid = nc_open_file_readonly(roms_filename, routine)
@@ -1702,22 +1696,9 @@ end subroutine unique_levels
 
 subroutine end_model()
 
-if (allocated(ULAT)) deallocate(ULAT)
-if (allocated(ULON)) deallocate(ULON)
-if (allocated(UDEP)) deallocate(UDEP)
-
-if (allocated(VLAT)) deallocate(VLAT)
-if (allocated(VLON)) deallocate(VLON)
-if (allocated(VDEP)) deallocate(VDEP)
-
-if (allocated(TLAT)) deallocate(TLAT)
-if (allocated(TLON)) deallocate(TLON)
-if (allocated(TDEP)) deallocate(TDEP)
-
-if (allocated(TMSK)) deallocate(TMSK)
-if (allocated(UMSK)) deallocate(UMSK)
-if (allocated(VMSK)) deallocate(VMSK)
-
+deallocate(ULAT, ULON, UDEP, UMSK)
+deallocate(VLAT, VLON, VDEP, VMSK)
+deallocate(TLAT, TLON, TDEP, TMSK)
 deallocate(h, Cr, sr)  
 
 end subroutine end_model
