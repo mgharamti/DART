@@ -32,7 +32,17 @@
 ! reading the z-level coordinates directly from the input file if 
 ! they are available, or (2) by actually computing them. The 
 ! computation here is done in a similar fashion to ROMS.
-
+! Sigma levels vary between -1 (ocean floor) to 0 (surface). 
+! The ROMS restart files in the vertical go from 1 -> Ns_rho where
+! Ns_rho is the surface and 1 is the bottom of the ocean. 
+! 
+! The "xi" coordinate varies east-west along longitude. The total 
+! number of xi's here is set to Nx. The "eta" coordinate varies 
+! North-South along latitude. The total number of eta's here is 
+! set to Ny. The number of vertical layers is set to Nz. 
+! Nx for U-component is denoted by the dimension xi_u which is 
+! simply Nx-1. Ny for V-component is denoted by eta_v which is 
+! simply Ny-1.  
 
 
 module model_mod
@@ -90,10 +100,7 @@ use netcdf
 implicit none
 private
 
-! these routines must be public and you cannot change
-! the arguments - they will be called *from* the DART code.
-
-! routines in this list have code in this module
+! Routines in this list have code in this module
 public :: get_model_size,                      &
           get_state_meta_data,                 &
           model_interpolate,                   &
@@ -104,7 +111,7 @@ public :: get_model_size,                      &
           write_model_time,                    &
           read_model_time
 
-! code for these routines are in other modules
+! Code for these routines are in other modules
 public :: nc_write_model_vars,                 &
           pert_model_copies,                   &
           adv_1step,                           &
@@ -115,22 +122,19 @@ public :: nc_write_model_vars,                 &
           get_close_obs,                       &
           get_close_state
 
-! not required interfaces but useful for utility programs
+! Useful for utility programs
 public :: get_time_information
           
-! version controlled file description for error handling, do not edit
+! Version controlled file description for error handling, do not edit
 character(len=256), parameter :: source  = 'ROMS/model_mod.f90'
+logical,            save      :: module_initialized = .false.
 
-character(len=512) :: string1, string2, string3
-logical, save      :: module_initialized = .false.
-
-! things which can/should be in the model_nml
-logical  :: output_state_vector         = .false.
-integer  :: assimilation_period_days    = 1
-integer  :: assimilation_period_seconds = 0
-integer  :: vert_localization_coord     = VERTISHEIGHT
-integer  :: debug                       = 0                ! turn up for more and more debug messages
-character(len=256) :: roms_filename     = 'roms_input.nc'
+! Things which can/should be in the model_nml
+character(len=256) :: roms_filename      = 'roms_input.nc'  ! Template model file to retrieve grid info
+integer  :: assimilation_period_days     = 1                ! Assimilation window in days
+integer  :: assimilation_period_seconds  = 0                ! Assimilation window in secs
+real(r8) :: perturbation_amplitude       = 0.02             ! Perturbation size for generating an ensemble
+integer  :: debug                        = 0                ! Turn up for more debug messages
 
 ! DART contents are specified in the input.nml:&model_nml namelist.
 integer, parameter              :: MAX_STATE_VARIABLES                          = 8
@@ -141,32 +145,23 @@ logical                         :: update_list(MAX_STATE_VARIABLES)             
 integer                         :: kind_list(MAX_STATE_VARIABLES)               = MISSING_I
 real(r8)                        :: clamp_vals(MAX_STATE_VARIABLES, 2)           = MISSING_R8
 
-namelist /model_nml/            &
-   assimilation_period_days,    &
-   assimilation_period_seconds, &
-   roms_filename,               &
-   vert_localization_coord,     &
-   debug,                       &
-   variables
-
-integer :: nfields ! This is the number of variables in the DART state vector
-integer :: domid   ! global variable for state_structure_mod routines
+namelist /model_nml/ assimilation_period_days,    &
+                     assimilation_period_seconds, &
+                     perturbation_amplitude,      &
+                     roms_filename,               &
+                     debug,                       &
+                     variables
 
 ! Interpolation grid handles 
 type(quad_interp_handle) :: interp_t_grid, &
                             interp_u_grid, &
                             interp_v_grid
 
-! Grid parameters - the values will be read from a
-! standard ROMS namelist and filled in here
-! Nx, Ny and Nz are the size of the rho grids
-integer  :: Nx = -1, Ny = -1, Nz = -1
-integer  :: Nu = -1, Nv = -1, Nw = -1
-integer  :: Nc = 4          ! number of corners of the quad for interpolation
-integer  :: Nd = 3          ! 3D location for the obs
-real(r8) :: Zm = -5000.0_r8 ! a masking factor to account for land
+! Grid dimensions read from file
+integer  :: Nx = -1, Ny = -1, Nz = -1         ! Nx, Ny and Nz are the size of the rho grids
+integer  :: Nu = -1, Nv = -1, Nw = -1         ! Staggered grid dimensions
 
-! model_interpolate failure codes
+! Failure codes: model_interpolate
 integer, parameter :: QUAD_LOCATE_FAILED   = 13
 integer, parameter :: QUAD_EVALUATE_FAILED = 21
 integer, parameter :: SSH_QUAD_EVAL_FAILED = 34
@@ -174,17 +169,25 @@ integer, parameter :: QUAD_MAYBE_ON_LAND   = 55
 integer, parameter :: OBS_TOO_DEEP         = 89
 
 ! ROMS related grid variables
-real(r8), allocatable :: ULAT(:,:), ULON(:,:), UDEP(:,:,:), &
-                         TLAT(:,:), TLON(:,:), TDEP(:,:,:), &
-                         VLAT(:,:), VLON(:,:), VDEP(:,:,:)
-logical, allocatable  :: TMSK(:,:), UMSK(:,:), VMSK(:,:)
-real(r8), allocatable :: h(:,:), Cr(:), sr(:)  
-real(r8)              :: hc         ! critical depth (m)
-integer               :: Vt         ! transformation formula from ROMS
-integer               :: ix, iy, ik
+real(r8), allocatable :: ULAT(:,:), ULON(:,:), UDEP(:,:,:), &  ! U-momentum component; lat, lon, depth 
+                         TLAT(:,:), TLON(:,:), TDEP(:,:,:), &  ! T, S, zeta;           lat, lon, depth
+                         VLAT(:,:), VLON(:,:), VDEP(:,:,:)     ! V-momentum component; lat, lon, depth
+logical,  allocatable :: TMSK(:,:), UMSK(:,:), VMSK(:,:)       ! Logical masks for land points 
+real(r8), allocatable :: h(:,:)                                ! Bathymetry (m) at RHO points
+real(r8), allocatable :: Cr(:), sr(:)                          ! S-coordinate related stretching curves
+real(r8)              :: hc                                    ! Critical depth (m)
+integer               :: Vt                                    ! Transformation formula from ROMS
 
-type(time_type) :: model_timestep
-integer         :: model_size       ! the state vector length
+! Other mod-mod variables 
+character(len=512) :: string1, string2, string3                ! Reserved for Output/Warning/Error messages
+integer            :: ix, iy, ik                               ! Counters 
+type(time_type)    :: model_timestep                           ! DA time window 
+integer            :: model_size                               ! State vector length
+integer            :: nfields                                  ! This is the number of variables in the DART state vector
+integer            :: domid                                    ! Global variable for state_structure_mod routines
+integer            :: Nc = 4                                   ! Number of corners of the quad for interpolation
+integer            :: Nd = 3                                   ! 3D location for the obs
+
 
 contains
 
@@ -235,9 +238,6 @@ if (do_nml_term()) write(     *     , nml=model_nml)
 model_timestep = set_model_time_step()
 call get_time(model_timestep, ss, dd)
 
-write(string1, *) 'Assimilation period is ', dd, ' days ', ss, ' seconds'
-call error_handler(E_MSG, routine, string1, source)
-
 ncid = nc_open_file_readonly(roms_filename, routine)
 
 call get_time_information(roms_filename, ncid, 'ocean_time', 'ocean_time', &
@@ -245,11 +245,11 @@ call get_time_information(roms_filename, ncid, 'ocean_time', 'ocean_time', &
 
 call set_calendar_type(trim(calendar))
 
-! Get the ROMS grid -- sizes and variables.
+! Get the ROMS grid -- sizes and variables
 call get_grid_dimensions()
 call get_grid()
 
-! parse_variable_input() fills var_names, kind_list, clamp_vals, update_list
+! Fill var_names, kind_list, clamp_vals, update_list
 call parse_variable_input(variables, nfields)
 
 domid = add_domain(roms_filename, & 
@@ -565,11 +565,11 @@ end subroutine nc_write_model_atts
 ! Using a pre-defined factor, create ensemble perturbations around 
 ! a single state.  
 
-subroutine pert_model_copies(state_ens_handle, ens_size, perturbation_amplitude, interf_provided)
+subroutine pert_model_copies(state_ens_handle, ens_size, pert_amp, interf_provided)
 
 type(ensemble_type), intent(inout) :: state_ens_handle
 integer,             intent(in)    :: ens_size
-real(r8),            intent(in)    :: perturbation_amplitude
+real(r8),            intent(in)    :: pert_amp
 logical,             intent(out)   :: interf_provided
 
 integer             :: var_type
@@ -763,7 +763,8 @@ integer                     :: ncid
 character(len=*), parameter :: routine = 'get_grid'
 
 real(r8), allocatable       :: zeta(:,:), zeta_lf(:,:,:) 
-real(r8), allocatable       :: mask(:,:)   ! Land mask: 0 land & 1 water
+real(r8), allocatable       :: mask(:,:)                 ! Land mask: 0 land & 1 water
+real(r8)                    :: Zm = -20000.0_r8          ! a masking factor to account for land
 
 allocate(ULAT(Nu, Ny), ULON(Nu, Ny), UMSK(Nu, Ny), UDEP(Nu, Ny, Nz))
 allocate(VLAT(Nx, Nv), VLON(Nx, Nv), VMSK(Nx, Nv), VDEP(Nx, Nv, Nz))
@@ -884,6 +885,7 @@ end subroutine get_grid
 !-----------------------------------------------------------------------
 ! Get physical depth z_rho using ROMS formulations:
 ! refer to set_depth.F
+
 subroutine compute_physical_depth(b, z, d)
 
 character(len=*), parameter :: routine = 'compute_physical_depth'
@@ -923,6 +925,7 @@ end subroutine compute_physical_depth
 
 !-----------------------------------------------------------------------
 ! Using z_rho, compute z_u and z_v
+
 subroutine U_V_depths()
 
 ! Compute z_u; average in xi direction 
@@ -1014,6 +1017,7 @@ end subroutine vert_interp
 
 !------------------------------------------------------------------
 ! Any model specific distance calcualtion can be done here
+
 subroutine get_close_obs(gc, base_loc, base_type, locs, loc_qtys, loc_types, &
                          num_close, close_ind, dist, ens_handle)
 
@@ -1038,6 +1042,7 @@ end subroutine get_close_obs
 
 !------------------------------------------------------------------
 ! Any model specific distance calcualtion can be done here
+
 subroutine get_close_state(gc, base_loc, base_type, locs, loc_qtys, loc_indx, &
                            num_close, close_ind, dist, ens_handle)
 

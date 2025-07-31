@@ -16,7 +16,7 @@
    roms_filename               = 'roms_hist_z.nc' 
    assimilation_period_days    = 8
    assimilation_period_seconds = 0
-   vert_localization_coord     = 3
+   perturbation_amplitude      = 0.02
    debug                       = 0
    variables                   = 'temp', 'QTY_TEMPERATURE'        , 'NA' , 'NA', 'update'
                                  'salt', 'QTY_SALINITY'           , '0.0', 'NA', 'update'
@@ -29,7 +29,7 @@
    async                    = 0
    adv_ens_command          = 'DART_trying_to_advance_ROMS_not_supported'
    ens_size                 = 3
-   obs_sequence_in_name     = 'obs_seq2.out'
+   obs_sequence_in_name     = 'obs_seqs/temp_sal.out'
    obs_sequence_out_name    = 'obs_seq.final'
    init_time_days           = -1
    init_time_seconds        = -1
@@ -58,11 +58,11 @@
    write_all_stages_at_end  = .false.
    num_output_state_members = 3
 
-   inf_flavor                  = 0,                       0
-   inf_initial_from_restart    = .false.,                 .false.
-   inf_sd_initial_from_restart = .false.,                 .false.
+   inf_flavor                  = 5,                       0
+   inf_initial_from_restart    = .true.,                 .false.
+   inf_sd_initial_from_restart = .true.,                 .false.
    inf_initial                 = 1.0,                     1.0
-   inf_lower_bound             = 1.0,                     1.0
+   inf_lower_bound             = 0.0,                     1.0
    inf_upper_bound             = 1000.0,                  1000.0
    inf_damping                 = 0.9,                     0.9
    inf_sd_initial              = 0.6,                     0.6
@@ -70,6 +70,44 @@
    inf_sd_max_change           = 1.05,                    1.05
   /
 
+# ---------------------
+# Note on Localization:
+# ---------------------
+# cutoff is the localization half-width parameter
+# or where the influence of the obs dcreases to half
+# The unit for cutoff is radians
+#
+# Example: For an effective localization radius
+# ++++++++ of 300 km. Set the cutoff to 0.0236
+#          such that loc: 0.0236*2*6371~300km 
+#          The factor 2 is to accoutn for the 
+#          entire distance (not only half-width)
+#          6371km is the radius of the Earth
+# 
+# Localization can be different for different 
+# observations. You can add a special localization 
+# for specific observations below. For example:  
+# 
+# special_localization_obs_types = 'SATELLITE_SSH', 'CTD_SALINITY', 'ARGO_TEMPERATURE'
+# special_localization_cutoffs   =            0.01,           0.02,               0.03 
+# Similar special treatment need to be applied in the vertical
+&assim_tools_nml
+   cutoff                          = 0.0236
+   sort_obs_inc                    = .false.
+   spread_restoration              = .false.
+   sampling_error_correction       = .false.
+   adaptive_localization_threshold = -1
+   output_localization_diagnostics = .false.
+   localization_diagnostics_file   = 'localization_diagnostics'
+   print_every_nth_obs             = 1000
+   distribute_mean                 = .true.
+  /
+
+&quality_control_nml
+   input_qc_threshold          = 3.0
+   enable_special_outlier_code = .false.
+   outlier_threshold            = 3.0
+  /
 
 &state_vector_io_nml
    buffer_state_io = .false.
@@ -118,24 +156,6 @@
    silence                    = .false.
   /
 
-&assim_tools_nml
-   cutoff                          = 0.02
-   sort_obs_inc                    = .false.
-   spread_restoration              = .false.
-   sampling_error_correction       = .false.
-   adaptive_localization_threshold = -1
-   output_localization_diagnostics = .false.
-   localization_diagnostics_file   = 'localization_diagnostics'
-   print_every_nth_obs             = 1000
-   distribute_mean                 = .true.
-  /
-
-&quality_control_nml
-   input_qc_threshold       = 3.0
-   enable_special_outlier_code = .false.
-   outlier_threshold        = 3.0
-  /
-
 &cov_cutoff_nml
    select_localization = 1
   /
@@ -145,6 +165,20 @@
    input_reg_file       = 'time_mean_reg'
    save_reg_diagnostics = .false.
    reg_diagnostics_file = 'reg_diagnostics'
+  /
+
+&fill_inflation_restart_nml
+   write_prior_inf   = .true.
+   prior_inf_mean    = 1.0
+   prior_inf_sd      = 0.6
+ 
+   write_post_inf    = .false.
+   post_inf_mean     = 1.00
+   post_inf_sd       = 0.6
+
+   input_state_files = 'roms_hist_z.nc'
+   single_file       = .false.
+   verbose           = .true.
   /
 
 &obs_sequence_nml
