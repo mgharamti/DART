@@ -157,36 +157,36 @@ type(quad_interp_handle) :: interp_t_grid, &
                             interp_u_grid, &
                             interp_v_grid
 
-! Grid dimensions read from file
-integer  :: Nx = -1, Ny = -1, Nz = -1         ! Nx, Ny and Nz are the size of the rho grids
-integer  :: Nu = -1, Nv = -1, Nw = -1         ! Staggered grid dimensions
-
-! Failure codes: model_interpolate
+! Failure codes: model_interpolate 
 integer, parameter :: QUAD_LOCATE_FAILED   = 13
 integer, parameter :: QUAD_EVALUATE_FAILED = 21
 integer, parameter :: SSH_QUAD_EVAL_FAILED = 34
 integer, parameter :: QUAD_MAYBE_ON_LAND   = 55
 integer, parameter :: OBS_TOO_DEEP         = 89
 
-! ROMS related grid variables
-real(r8), allocatable :: ULAT(:,:), ULON(:,:), UDEP(:,:,:), &  ! U-momentum component; lat, lon, depth 
-                         TLAT(:,:), TLON(:,:), TDEP(:,:,:), &  ! T, S, zeta;           lat, lon, depth
-                         VLAT(:,:), VLON(:,:), VDEP(:,:,:)     ! V-momentum component; lat, lon, depth
-logical,  allocatable :: TMSK(:,:), UMSK(:,:), VMSK(:,:)       ! Logical masks for land points 
-real(r8), allocatable :: h(:,:)                                ! Bathymetry (m) at RHO points
-real(r8), allocatable :: Cr(:), sr(:)                          ! S-coordinate related stretching curves
-real(r8)              :: hc                                    ! Critical depth (m)
-integer               :: Vt                                    ! Transformation formula from ROMS
+! ROMS grid dimensions read from file
+integer  :: Nx = -1, Ny = -1, Nz = -1                       ! Nx, Ny and Nz are the size of the rho grids
+integer  :: Nu = -1, Nv = -1, Nw = -1                       ! Staggered grid dimensions
 
-! Other mod-mod variables 
-character(len=512) :: string1, string2, string3                ! Reserved for Output/Warning/Error messages
-integer            :: ix, iy, ik                               ! Counters 
-type(time_type)    :: model_timestep                           ! DA time window 
-integer            :: model_size                               ! State vector length
-integer            :: nfields                                  ! This is the number of variables in the DART state vector
-integer            :: domid                                    ! Global variable for state_structure_mod routines
-integer            :: Nc = 4                                   ! Number of corners of the quad for interpolation
-integer            :: Nd = 3                                   ! 3D location for the obs
+! ROMS related grid variables
+real(r8), allocatable :: ULAT(:,:), ULON(:,:), UDEP(:,:,:)  ! U-momentum component; lat, lon, depth 
+real(r8), allocatable :: TLAT(:,:), TLON(:,:), TDEP(:,:,:)  ! T, S, zeta;           lat, lon, depth
+real(r8), allocatable :: VLAT(:,:), VLON(:,:), VDEP(:,:,:)  ! V-momentum component; lat, lon, depth
+logical,  allocatable :: TMSK(:,:), UMSK(:,:), VMSK(:,:)    ! Logical masks for land points 
+real(r8), allocatable :: h(:,:)                             ! Bathymetry (m) at RHO points
+real(r8), allocatable :: Cr(:), sr(:)                       ! S-coordinate related stretching curves
+real(r8)              :: hc                                 ! Critical depth (m)
+integer               :: Vt                                 ! Transformation formula from ROMS
+
+! Other model-mod variables 
+character(len=512) :: string1, string2, string3             ! Reserved for Output/Warning/Error messages
+integer            :: ix, iy, ik                            ! Counters 
+type(time_type)    :: model_timestep                        ! DA time window 
+integer            :: model_size                            ! State vector length
+integer            :: nfields                               ! This is the number of variables in the DART state vector
+integer            :: domid                                 ! Global variable for state_structure_mod routines
+integer            :: Nc = 4                                ! Number of corners of the quad for interpolation
+integer            :: Nd = 3                                ! 3D location for the obs
 
 
 contains
@@ -205,16 +205,16 @@ contains
 
 subroutine static_init_model()
 
+character(len=*), parameter :: routine = 'static_init_model'
+
 integer :: iunit, io
 integer :: ss, dd
 integer :: ncid
 
 character(len=32) :: calendar
-character(len=*), parameter :: routine = 'static_init_model'
+type(time_type)   :: model_time
 
-type(time_type) :: model_time
-
-if ( module_initialized ) return
+if (module_initialized) return
 
 ! * read in the grid sizes from grid file
 ! * allocate space, and read in actual grid values
@@ -527,8 +527,8 @@ end function shortest_time_between_assimilations
 ! This includes coordinate variables and some metadata, but NOT the
 ! actual DART state.
 !
-! ncid the netCDF handle of the DART diagnostic file opened by
-!                 assim_model_mod:init_diag_output
+! ncid: the netCDF handle of the DART diagnostic file opened by
+!       assim_model_mod:init_diag_output
 
 subroutine nc_write_model_atts(ncid, domain_id)
 
@@ -605,14 +605,14 @@ end subroutine pert_model_copies
 
 
 !-----------------------------------------------------------------------
-! writes the time of the current state and (optionally) the time
+! Writes the time of the current state and (optionally) the time
 ! to be conveyed to ROMS to dictate the length of the forecast.
 ! This file is then used by scripts to modify the ROMS run.
 ! The format in the time information is totally at your discretion.
 !
-! ncfile_out name of the file
-! model_time the current time of the model state
-! adv_to_time the time in the future of the next assimilation.
+! ncid:        File id
+! model_time:  The current time of the model state
+! adv_to_time: The time in the future of the next assimilation.
 
 subroutine write_model_time(ncid, model_time, adv_to_time)
 
@@ -667,8 +667,8 @@ end subroutine write_model_time
 
 
 !--------------------------------------------------------------------
-! read the time from the input file
-! filename name of file that contains the time
+! Read the time from the input file
+! filename: Name of file that contains the time
 
 function read_model_time(filename)
 
@@ -1076,7 +1076,7 @@ end subroutine get_close_state
 
 
 !------------------------------------------------------------
-! calculate sensible (in-situ) temperature from 
+! Calculate sensible (in-situ) temperature from 
 ! local pressure, salinity, and potential temperature
 
 elemental function sensible_temp(potemp, s, lpres)
@@ -1139,8 +1139,8 @@ end function sensible_temp
 ! Fill the array of requested variables, dart kinds, possible min/max
 ! values and whether or not to update the field in the output file.
 !
-! state_variables the list of variables and kinds from model_mod_nml
-! ngood the number of variable/KIND pairs specified
+! state_variables: List of variables and kinds from model_mod_nml
+! ngood:           Number of variable/KIND pairs specified
 
 subroutine parse_variable_input(state_variables, ngood)
 
@@ -1204,15 +1204,16 @@ end subroutine parse_variable_input
 ! Find the named variable (often 'ocean_time') in a ROMS netCDF file.
 ! If it is not found, it is a fatal error.
 !
-! filename the name of the ROMS netCDF file
-!                 (used to generate useful error messages).
-! ncid the netCDF handle to the ROMS netCDF file.
-! variable name which contains the time
-! calendar the character string indicating the calendar in use
-! last_time_index the value of the last time dimension
-! last_time the time/date of the last time
-! origin_time the base time other times are relative to
-! all_times an array of all times in the variable
+! filename:        Name of ROMS file (used to generate useful error messages)
+! ncid:            NetCDF handle to the ROMS netCDF file
+! var_name:        Name which contains the time
+! dim_name:        Dimension name of the time variable
+! myvarid:         Optional output of the variable id 
+! calendar:        Character string indicating the calendar in use
+! last_time_index: Value of the last time dimension
+! last_time:       Time/date of the last time
+! origin_time:     Base time other times are relative to
+! all_times:       Array of all times in the variable
 
 subroutine get_time_information(filename, ncid, var_name, dim_name, myvarid, &
                calendar, last_time_index, last_time, origin_time, all_times)
@@ -1368,16 +1369,16 @@ end subroutine get_time_information
 
 
 !-----------------------------------------------------------------------
-! convert a fractional day to a dart time type
+! Convert a fractional day to a dart time type
 
 function convert_to_time_offset(offset, offset_in_seconds)
 
 real(digits12), intent(in) :: offset
 logical,        intent(in) :: offset_in_seconds
-type(time_type) :: convert_to_time_offset
+type(time_type)            :: convert_to_time_offset
 
 integer(i8) :: big_integer
-integer :: some_seconds, some_days
+integer     :: some_seconds, some_days
 
 if (offset_in_seconds) then
    big_integer  = int(offset,i8)
@@ -1396,18 +1397,18 @@ end function convert_to_time_offset
 
 
 !-----------------------------------------------------------------------
-! convert DART time type into a character string with the
+! Convert DART time type into a character string with the
 ! format of YYYYMMDDhh ... or DDhh
 !
-! time_to_string the character string containing the time
-! t:        the time
-! interval: logical flag describing if the time is to be
-!           interpreted as a calendar date or a time increment.
-!           If the flag is merely present, the time is to be
-!           interpreted as an increment and the format is simply
-!           DDhh. If the flag is not present, the time is a full
-!           calendar (Gregorian) date and will be renedered with
-!           the YYYYMMDDhh format.
+! time_to_string: Character string containing the time
+! t:              Time
+! interval:       Logical flag describing if the time is to be
+!                 interpreted as a calendar date or a time increment.
+!                 If the flag is merely present, the time is to be
+!                 interpreted as an increment and the format is simply
+!                 DDhh. If the flag is not present, the time is a full
+!                 calendar (Gregorian) date and will be renedered with
+!                 the YYYYMMDDhh format.
 
 function time_to_string(t, interval)
 
@@ -1594,7 +1595,9 @@ end subroutine quad_on_land
 
 
 !-----------------------------------------------------------------------
-! Does any shutdown and clean-up needed for model.
+! Given a depth of the observation, locate the bottom and top model
+! levels to where it belongs. Also, compute the associated fractional
+! width for interpolation.
 
 subroutine depth_bounds(in_depth, all_depth, bot, top, frc, istatus)
 
