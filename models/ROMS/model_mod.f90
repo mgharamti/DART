@@ -320,8 +320,6 @@ elseif (myqty == QTY_V_CURRENT_COMPONENT) then
    location = set_location(VLON(iloc,jloc), VLAT(iloc,jloc), VDEP(iloc,jloc,kloc), VERTISHEIGHT)
 
 elseif (myqty == QTY_SEA_SURFACE_HEIGHT) then
-   ! TODO: So, because we are also doing waves and tides SSH (or zeta) could have a negative depth 
-   ! Need to check this down the line
    location = set_location(TLON(iloc,jloc), TLAT(iloc,jloc), 0.0_r8, VERTISSURFACE)
 
 else  ! Everything else is assumed to be on the rho points
@@ -1164,16 +1162,16 @@ MyLoop : do i = 1, MAX_STATE_VARIABLES
    maxvalstring = trim(state_variables(table_columns*i-1))
    state_or_aux = trim(state_variables(table_columns*i  ))
 
-   if ( varname == ' ' .and. dartstr == ' ' ) exit MyLoop ! Found end of list.
+   if (varname == ' ' .and. dartstr == ' ') exit MyLoop ! Found end of list.
 
-   if ( varname == ' ' .or. dartstr == ' ' ) then
+   if (varname == ' ' .or. dartstr == ' ') then
       string1 = 'model_nml:model "variables" not fully specified'
       call error_handler(E_ERR, routine, string1, source)
    endif
 
    ! Make sure DART kind is valid
-   if( get_index_for_quantity(dartstr) < 0 ) then
-      write(string1,'(''there is no quantity <'',a,''> in obs_kind_mod.f90'')') trim(dartstr)
+   if(get_index_for_quantity(dartstr) < 0) then
+      write(string1, '(''there is no quantity <'',a,''> in obs_kind_mod.f90'')') trim(dartstr)
       call error_handler(E_ERR, routine, string1, source)
    endif
 
@@ -1193,7 +1191,7 @@ enddo MyLoop
 
 if (ngood == MAX_STATE_VARIABLES) then
    string1 = 'WARNING: There is a possibility you need to increase ''MAX_STATE_VARIABLES'''
-   write(string2,'(''WARNING: you have specified at least '',i4,'' perhaps more.'')')ngood
+   write(string2, '(''WARNING: you have specified at least '',i4,'' perhaps more.'')') ngood
    call error_handler(E_MSG, routine, string1, source, text2=string2)
 endif
 
@@ -1229,18 +1227,17 @@ type(time_type),   optional, intent(out) :: last_time
 type(time_type),   optional, intent(out) :: origin_time
 type(time_type),   optional, intent(out) :: all_times(:)
 
-character(len=*), parameter   :: routine = 'get_time_information'
+character(len=*), parameter :: routine = 'get_time_information'
 
-integer           :: ios, DimID, VarID, dimlen, i
-character(len=64) :: unitstring
-character(len=32) :: calendarstring
+integer                     :: ios, DimID, VarID, dimlen, i
+character(len=64)           :: unitstring
+character(len=32)           :: calendarstring
 
-integer :: year, month, day, hour, minute, second, rc
+integer                     :: year, month, day, hour, minute, second, rc
 real(digits12), allocatable :: these_times(:)
-type(time_type) :: time_offset, base_time
+type(time_type)             :: time_offset, base_time
 
 logical :: offset_in_seconds  ! if .false., assuming offset in days
-
 integer :: original_calendar_type
 
 call nc_check(nf90_inq_dimid(ncid,dim_name,dimid=DimID), &
@@ -1279,7 +1276,7 @@ if (present(last_time) .or. present(origin_time) .or. present(all_times)) then
 
    ! We need to set the calendar to interpret the time values
    ! do we need to preserve the original calendar setting if there is one?
-   call set_calendar_type( trim(calendarstring) )
+   call set_calendar_type(trim(calendarstring))
 
    ! Make sure the calendar is expected form
    ! var_name:units    = "seconds since 1999-01-01 00:00:00" ;
@@ -1304,7 +1301,7 @@ if (present(last_time) .or. present(origin_time) .or. present(all_times)) then
       endif
       offset_in_seconds = .true.
 
-   else if (unitstring(1:10) == 'days since') then
+   elseif (unitstring(1:10) == 'days since') then
       read(unitstring,'(11x,i4,5(1x,i2))',iostat=ios)year,month,day,hour,minute,second
       if (ios /= 0) then
          write(string1,*)'Unable to read time variable units. Error status was ',ios
@@ -1696,6 +1693,7 @@ subroutine unique_levels(val1, val2, N, val_un, N_un)
   enddo
 
   N_un = count
+
 end subroutine unique_levels
 
 
