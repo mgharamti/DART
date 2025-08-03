@@ -1,432 +1,302 @@
-ROMS
-====
+ROMS-Rutgers
+============
+The Regional Ocean Modeling System (ROMS) is a widely used, open-source, free-surface, 
+terrain-following, primitive equations ocean model designed for studying coastal and 
+regional ocean dynamics. It has been developed by an international community of 
+scientists and modelers since the late 1990s. Please visit `MyRoms <https://www.myroms.org/>`_
+and `ROMSwiki <https://www.myroms.org/wiki/Documentation_Portal>`_ for more information on the model.
 
-There are several DART users who have working DART interface code
-to the Regional Ocean Modeling System (ROMS), as the model is a community ocean
-model funded by the Office of Naval Research. Please visit `MyRoms <https://www.myroms.org/>`_
-for more information on the model.
+Key Features
+------------
+- **Terrain-following vertical coordinates (sigma coordinates):**  
+  ROMS uses a curvilinear vertical coordinate system that adapts to the ocean
+  bottom topography, allowing for accurate representation of coastal and shelf
+  processes.
 
-The lead developers are at Rutgers and UCLA, but the list of associate
-developers is extensive. Please read `ROMS developers <https://www.myroms.org/index.php?page=roms_devs>`_
-for more information.
+- **Free surface and baroclinic dynamics:**  
+  The model resolves both the surface elevation and stratified (density-driven)
+  flows, capturing tides, currents, and thermohaline circulation.
 
-If you are interested in running DART with this model please contact the DART
-group at dart@ucar.edu for more information.  We are currently working with
-collaborators to optimize the model_mod interface and associated scripting to
-run data assimilation experiments with this model. We may be able to put you in
-contact with the right people to get a copy of the code.
+- **Modular and flexible framework:**  
+  ROMS supports a variety of physical processes including advection, mixing,
+  sediment transport, and biogeochemical cycles, and can be coupled with
+  atmospheric and wave models.
 
-Overview
---------
+Typical Applications
+--------------------
+- Coastal circulation and upwelling studies  
+- Estuarine and shelf sea dynamics  
+- Harmful algal bloom modeling  
+- Sediment transport and morphodynamics  
+- Coupled physical-biogeochemical simulations  
+- Operational forecasting and climate research
+  
+Below we describe the ROMS interface to DART. Please note that this interface 
+supports the Rutgers version of ROMS **only**. Other versions of the model 
+are also supported. Please refere to -- for the UCLA interface. If 
+you have any questions regarding this interface or other ROMS-DART related 
+questions, please reach out to the DART team at dart@ucar.edu
 
-This document describes the relationship between ROMS and DART and provides an
-overview of how to perform ensemble data assimilation with ROMS to provide ocean
-states that are consistent with the information provided by various ocean
-observations.
 
-Running ROMS is complicated. It is **strongly** recommended that you become very
-familiar with running ROMS before you attempt a ROMS-DART assimilation
-experiment. Running DART is complicated. It is **strongly** recommended that you
-become very familiar with running DART before you attempt a ROMS-DART
-assimilation experiment. Running ROMS-DART takes expertise in both areas.
+Interface Overview
+==================
+This module serves as the interface between ROMS and DART. 
+It defines the set of routines that DART uses to interact with ROMS state variables, 
+perform interpolation, perturbations, metadata access, and read/write state data. It
+supports: 
 
-We recommend working through the :doc:`DART tutorial <../../theory/readme>`
-to learn the concepts of ensemble data assimilation and the capabilities of DART.
+- Model initialization and state management
+- Observation-space interpolation of model state variables
+- Vertical coordinate transformation and interpolation
+- Mapping between DART's state vector and ROMS fields
 
-The ROMS code is not distributed with DART, it can be obtained from the `ROMS website <https://www.myroms.org>`_.
-There you will also find instructions on how to compile and run ROMS. DART can
-use the 'verification observations' from ROMS (basically the estimate of the
-observation at the location and time computed as the model advances) so it
-would be worthwhile to become familiar with that capability of ROMS.
+Unlike the UCLA ROMS-DART interface, this version **does not rely on precomputed observation-space values** 
+output by ROMS (e.g., from `MODname` in `s4dvar.in`). Instead, it **computes observation-space equivalents directly** 
+via interpolation routines implemented using the `quad_utils` module.
 
-DART calls these 'precomputed forward operators'. DART can also use observations
-from the `World Ocean Database <https://www.nodc.noaa.gov/OC5/indprod.html>`_ -
-WOD. The conversion from the WOD formats to the DART observation sequence format
-is accomplished by the converters in the ``DART/observations/obs_converters/WOD``
-directory.
 
-The DART forward operators require interpolation from the ROMS terrain-following
-and horizontally curvilinear orthogonal coordinates to the observation location.
-Please contact us for more information about this interpolation.
+Namelist Configuration (`model_nml`)
+------------------------------------
+The ROMS–DART interface is configured through the `model_nml` namelist. 
+This namelist is read from the file *input.nml*. Namelists start with an
+ampersand '&' and terminate with a slash '/'. Character strings that
+contain a '/' must be enclosed in quotes to prevent them from
+prematurely terminating the namelist. 
 
-Generating an initial ensemble
+The table below describes the configurable variables in this namelist:
+
+.. list-table:: `&model_nml` Namelist Variables
+   :widths: 20 15 15 50
+   :header-rows: 1
+
+   * - Variable
+     - Type
+     - Default
+     - Description
+   * - ``roms_filename``
+     - `character(len=256)`
+     - `'roms_input.nc'`
+     - Path to a ROMS NetCDF template file used to extract static grid and mask information.
+   * - ``assimilation_period_days``
+     - `integer`
+     - `1`
+     - Number of days in each assimilation window.
+   * - ``assimilation_period_seconds``
+     - `integer`
+     - `0`
+     - Number of seconds (in addition to days) in each assimilation window.
+   * - ``perturbation_amplitude``
+     - `real(r8)`
+     - `0.02`
+     - Amplitude used to perturb ensemble members for ensemble generation.
+   * - ``debug``
+     - `integer`
+     - `0`
+     - Debugging verbosity level. Set >0 for more detailed log output.
+   * - ``variables``
+     - `character(len=vtablenamelength), dimension(MAX_STATE_VARIABLES * table_columns)`
+     - `' '` 
+     - Specifies the list of ROMS variables to be assimilated. The variable table is parsed as flat strings with metadata.
+
+Additional internal variables derived from this configuration:
+
+.. code-block:: fortran
+
+   integer, parameter              :: MAX_STATE_VARIABLES = 8
+   integer, parameter              :: table_columns       = 5
+   character(len=vtablenamelength) :: var_names(MAX_STATE_VARIABLES)
+   logical                         :: update_list(MAX_STATE_VARIABLES)
+   integer                         :: kind_list(MAX_STATE_VARIABLES)
+   real(r8)                        :: clamp_vals(MAX_STATE_VARIABLES, 2)
+
+These are used to manage variable selection, quantity mapping, and optional clamping during assimilation. 
+More details are found below. 
+
+
+Variable Table Format
+---------------------
+
+The `variables` field in the `&model_nml` namelist is used to declare each state variable to be included in the DART state vector. 
+Each variable entry consists of **five elements** (columns), listed in a single Fortran character array:
+
+.. list-table:: Format of Each `variables` Entry
+   :widths: 15 20 20 20 25
+   :header-rows: 1
+
+   * - Field
+     - Description
+     - Example
+     - Notes
+     - Requirement
+   * - 1. Variable Name
+     - Name of the ROMS variable in the NetCDF file.
+     - `'temp'`
+     - Must match the ROMS file variable name exactly.
+     - Required
+   * - 2. DART Quantity
+     - DART internal quantity label.
+     - `'QTY_TEMPERATURE'`
+     - Must be a valid DART `quantity` name.
+     - Required
+   * - 3. Minimum Value
+     - Lower bound as a string, or `'NA'` for none.
+     - `'0.0'`
+     - Used for clamping or bounds checking in DART.
+     - Optional
+   * - 4. Maximum Value
+     - Upper bound as a string, or `'NA'` for none.
+     - `'NA'`
+     - Same usage as above.
+     - Optional
+   * - 5. Update Rule
+     - Whether DART should write back this variable to the ROMS restart file.
+     - `'UPDATE'`
+     - `'UPDATE'` = write back; `'NO_COPY_BACK'` = internal use only.
+     - Required
+
+**Example** namelist snippet:
+
+.. code-block:: fortran
+
+   variables = 'temp', 'QTY_TEMPERATURE'        , 'NA' , 'NA', 'UPDATE',
+               'salt', 'QTY_SALINITY'           , '0.0', 'NA', 'UPDATE',
+               'u'   , 'QTY_U_CURRENT_COMPONENT', 'NA' , 'NA', 'UPDATE',
+               'v'   , 'QTY_V_CURRENT_COMPONENT', 'NA' , 'NA', 'UPDATE',
+               'zeta', 'QTY_SEA_SURFACE_HEIGHT' , 'NA' , 'NA', 'UPDATE'
+
+Each variable must appear as a consecutive 5-element group in the flat `variables` array. The interface supports up to `MAX_STATE_VARIABLES`, each with 5 fields.
+
+Remarks
+^^^^^^^
+- Variables marked as `'NO_COPY_BACK'` are updated within the DART filter but are **not** written back to the ROMS restart file.
+- Only variables in **restart files** can be updated in ROMS. Ensure `roms_filename` points to a restart file 
+  (e.g., `roms_input.nc`) when using `'UPDATE'`.
+- Observation times are assimilated if they fall within `±0.5 × assimilation_period_days` from the model forecast time.
+
+
+Generating an Initial Ensemble
 ------------------------------
 
 The ROMS interface provides the ability to create an ensemble of initial ROMS
 history files from an initial file by using the
-:doc:`/assimilation_code/programs/perturb_single_instance/perturb_single_instance`.
+``perturb_single_instance`` routine.
 You can specify an ensemble of any size in the ``perturb_single_instance``
 namelist in ``input.nml`` and this program will randomly perturb the 
 temperature and salinity fields of an initial ROMS history file to generate 
-the ensemble.
+the ensemble. The size of the perturbation is set using the namelist parameter
+``perturbation_amplitude`` and the resulting initial distribution is Gaussian. 
 
-A note about filenames
+.. note::
+   This DART-ROMS interface is designed to support **variables with a single time level**, 
+   as typically found in ROMS **history files**. It does **not** support variables that have 
+   multiple time levels (e.g., 2 or 3), which are common in ROMS **restart files** due to the 
+   leapfrog time-stepping scheme. Users must ensure that only single time-level variables are 
+   specified for assimilation. Multi-level time variables can lead to incorrect indexing or 
+   data interpretation during assimilation.
+
+
+Key Interface Routines
 ----------------------
 
-During the course of an experiment, many files are created. To make them unique,
-the *ocean_time* is converted from "seconds since 1900-01-01 00:00:00" to the
-equivalent number of DAYS. An *integer* number of days. The intent is to tag the
-filename to reflect the valid time of the model state. This could be used as the
-DSTART for the next cycle, so it makes sense to me. The confusion comes when
-applied to the observation files.
+.. _static_init_model:
 
-The input observation files for the ROMS 4DVAR
-system typically have a DSTART that designates the start of the forecast cycle
-and the file must contain observation from DSTART to the end of the forecast.
-Makes sense.
+.. function:: subroutine static_init_model()
 
-The model runs to the end of the forecast, harvesting the verification
-observations along the way. So then DART converts all those verification
-observations and tags that file ... with the same time tag as all the other
-output files ... which reflects the *ocean_time* (converted to days). The input
-observation file to ROMS will have a different DSTART time in the filename than
-the corresponding verification files. Ugh. You are free to come up with a better
-plan.
+   Initializes the ROMS model interface for DART. Reads configuration from the namelist
+   and loads static grid, bathymetry, and vertical coordinate information.
 
-These are just examples...after all; hopefully good examples.
+   **Reads:**
+     - `roms_filename` from `model_nml`
+     - ROMS netCDF file grid variables
 
-Procedure
----------
+   **Actions:**
+     - Validates namelist variables 
+     - Allocates space and constructs the grid
+     - Computes physical grid coordinates (if not available in the ROMS file)
+     - Determines the model size
 
-The procedure to perform an assimilation experiment is outlined in the following
-steps:
+.. _model_interpolate:
 
-#. Compile ROMS (as per the ROMS instructions).
-#. Compile all the DART executables (in the normal fashion).
-#. Stage a directory with all the files required to advance an ensemble
-   of ROMS models and DART.
-#. Modify the run-time controls in ``ocean.in``, ``s4dvar.in`` and
-   ``input.nml``. Since ROMS has a *Bin/subsitute* command, it is used to
-   replace temporary placeholders with actual values at various parts
-   during the process.
-#. Advance all the instances of ROMS; each one will produce a restart
-   file and a verification observation file.
-#. Convert all the verification observation files into a single DART
-   observation sequence file with the
-   ``convert_roms_obs.f90`` program in ``DART/observations/obs_converters/ROMS/``.
-#. Run filter to assimilate the data (DART will read and update the ROMS files
-   directly - no conversion is necessary.)
-#. Update the control files for ROMS in preparation for the next model
-   advance.
+.. function:: subroutine model_interpolate(state, location, obs_type, expected_obs, istatus)
 
-Shell scripts
--------------
+   Interpolates the model state to a given physical location.
 
-The ``shell_scripts`` directory has several scripts that are intended to
-provide examples. These scripts **WILL** need to be modified to work on
-your system and are heavily internally commented. It will be necessary
-to read through and understand the scripts. As mentioned before, the
-ROMS *Bin/subsitute* command is used to replace temporary placeholders
-with actual values at various parts during the process.
+   :param state_handle: DART ensemble handle (type(ensemble_type))
+   :param ens_size: Ensemble size (integer)
+   :param location: Observation location (type(location_type))
+   :param obs_type: DART quantity (integer)
+   :param expected_obs: Ensmeble interpolated values (real(r8), dimension(ens_size))
+   :param istatus: Status flag (integer)
 
-+----------------------------------+----------------------------------+
-| Script                           | Description                      |
-+==================================+==================================+
-| ensemble.sh                      | Was written by Hernan Arango to  |
-|                                  | run an ensemble of ROMS models.  |
-|                                  | It is an appropriate example of  |
-|                                  | what is required from the ROMS   |
-|                                  | perspective. It does no data     |
-|                                  | assimilation.                    |
-+----------------------------------+----------------------------------+
-| stage_experiment.csh             | prepares a directory for an      |
-|                                  | assimilation experiment. The     |
-|                                  | idea is basically that           |
-|                                  | everything you need should be    |
-|                                  | assembled by this script and     |
-|                                  | that this should only be run     |
-|                                  | ONCE per experiment. After       |
-|                                  | everything is staged in the      |
-|                                  | experiment directory, another    |
-|                                  | script can be run to advance the |
-|                                  | model and perform the            |
-|                                  | assimilation.                    |
-|                                  | *stage_experiment.csh* will also |
-|                                  | modify some of the template      |
-|                                  | scripts and copy working         |
-|                                  | versions into the experiment     |
-|                                  | directory. This script may be    |
-|                                  | run interactively, i.e. from the |
-|                                  | UNIX command line.               |
-+----------------------------------+----------------------------------+
-| submit_multiple_cycles_lsf.csh   | is an executable script that     |
-|                                  | submits a series of dependent    |
-|                                  | jobs to an LSF queuing system.   |
-|                                  | Each job runs *cycle.csh* in the |
-|                                  | experiment directory and only    |
-|                                  | runs if the previous dependent   |
-|                                  | job completes successfully.      |
-+----------------------------------+----------------------------------+
-| cycle.csh.template               | is a non-executable template     |
-|                                  | that is modified by              |
-|                                  | *stage_experiment.csh* and       |
-|                                  | results in an exectuable         |
-|                                  | *cycle.csh* in the experiment    |
-|                                  | directory. *cycle.csh* is        |
-|                                  | designed to be run as a batch    |
-|                                  | job and advances the ROMS model  |
-|                                  | states one-by-one for the        |
-|                                  | desired forecast length. The     |
-|                                  | assimilation is performed and    |
-|                                  | the control information for the  |
-|                                  | next ROMS forecast is updated.   |
-|                                  | Each model execution and         |
-|                                  | *filter* use the same set of MPI |
-|                                  | tasks.                           |
-+----------------------------------+----------------------------------+
-| submit_multiple_jobs_slurm.csh   | is an executable script that     |
-|                                  | submits a series of dependent    |
-|                                  | jobs to an LSF queuing system.   |
-|                                  | It is possible to submit         |
-|                                  | **many** jobs the queue, but the |
-|                                  | jobs run one-at-a-time. Every    |
-|                                  | assimilation cycle is divided    |
-|                                  | into two scripts to be able to   |
-|                                  | efficiently set the resources    |
-|                                  | for each phase.                  |
-|                                  | *advance_ensemble.csh* is a job  |
-|                                  | array that advances each ROMS    |
-|                                  | instance in separate jobs. When  |
-|                                  | the entire job array finishes -  |
-|                                  | and only if they all finish      |
-|                                  | correctly - will the next job    |
-|                                  | start to run. *run_filter.csh*   |
-|                                  | performs the assimilation and    |
-|                                  | prepares the experiment          |
-|                                  | directory for another            |
-|                                  | assimilation cycle.              |
-|                                  | *submit_multiple_jobs_slurm.csh* |
-|                                  | may be run from the command line |
-|                                  | in the experiment directory.     |
-|                                  | Multiple assimilation cycles can |
-|                                  | be specified, so it is possible  |
-|                                  | to put **many** jobs in the      |
-|                                  | queue.                           |
-+----------------------------------+----------------------------------+
-| advance_ensemble.csh.template    | is a non-executable template     |
-|                                  | that is modified by              |
-|                                  | *stage_experiment.csh* and       |
-|                                  | results in an exectuable         |
-|                                  | *advance_ensemble.csh* in the    |
-|                                  | experiment directory.            |
-|                                  | *advance_ensemble.csh* is        |
-|                                  | designed to submit an job array  |
-|                                  | to the queueing system           |
-|                                  | (PBS,SLURM, or LSF) to advance   |
-|                                  | the ensemble members in separate |
-|                                  | jobs.                            |
-+----------------------------------+----------------------------------+
-| run_filter.csh.template          | is a non-executable template     |
-|                                  | that is modified by              |
-|                                  | *stage_experiment.csh* and       |
-|                                  | results in an exectuable         |
-|                                  | *run_filter.csh* in the          |
-|                                  | experiment directory.            |
-|                                  | *run_filter.csh* is very similar |
-|                                  | to *cycle.csh* but does not      |
-|                                  | advance the ROMS model           |
-|                                  | instances.                       |
-+----------------------------------+----------------------------------+
+   Uses bilinear interpolation in the horizontal and linear vertical interpolation
+   (via `vert_interp`) to compute model values at arbitrary locations.
 
-The variables from ROMS that are copied into the DART state vector are
-controlled by the *input.nml* *model_nml* namelist. See below for the
-documentation on the &model_nml entries. The state vector should include all
-variables needed to apply the forward observation operators as well as the
-prognostic variables important to restart ROMS.
+   **Interpolation method:**
+     - Horizontal: Bilinear in latitude/longitude
+     - Vertical: Based on ROMS s-coordinate or z-levels
 
-The example *input.nml* *model_nml* demonstrates how to construct the DART state
-vector. The following table explains in detail each entry for the *variables*
-namelist item:
+.. _get_state_meta_data:
 
-+----------------+-----------------------------------+
-| Variable name  | This is the ROMS variable name as |
-|                | it appears in the ROMS netCDF     |
-|                | file.                             |
-+----------------+-----------------------------------+
-| DART QUANTITY  | This is the character string of   |
-|                | the corresponding DART QUANTITY.  |
-|                | The complete list of possible     |
-|                | DART QUANTITY values is available |
-|                | in the ``obs_def_mod``            |
-|                | that is built by ``preprocess``.  |
-+----------------+-----------------------------------+
-| minimum        | If the variable is to be updated  |
-|                | in the ROMS restart file, this    |
-|                | specifies the minimum value. If   |
-|                | set to 'NA', there is no minimum  |
-|                | value.                            |
-+----------------+-----------------------------------+
-| maximum        | If the variable is to be updated  |
-|                | in the ROMS restart file, this    |
-|                | specifies the maximum value. If   |
-|                | set to 'NA', there is no maximum  |
-|                | value.                            |
-+----------------+-----------------------------------+
-| update         | The updated variable may or may   |
-|                | not be written to the ROMS        |
-|                | restart file.                     |
-|                | *'UPDATE'*  means the variable in |
-|                | the restart file is updated. This |
-|                | is case-insensitive.              |
-|                | *'NO_COPY_BACK'*  (or anything    |
-|                | else) means the variable in the   |
-|                | restart file remains unchanged.   |
-+----------------+-----------------------------------+
+.. function:: subroutine get_state_meta_data(index_in, location, var_type)
 
-Namelist
---------
+   Maps an index in the DART state vector to a physical model location.
 
-This namelist is read from the file *input.nml*. Namelists start with an
-ampersand '&' and terminate with a slash '/'. Character strings that
-contain a '/' must be enclosed in quotes to prevent them from
-prematurely terminating the namelist. The default namelist is presented
-below, a more realistic namelist is presented at the end of this
-section.
+   :param index_in: Index in the state vector (integer)
+   :param location: Output location (type(location_type))
+   :param var_type: DART quantity type (integer)
 
-.. code-block:: fortran
+   Converts the flattened index into 3D coordinates and identifies which ROMS variable
+   is represented at that location.
 
-   &model_nml
-     roms_filename               = 'roms_input.nc'
-     assimilation_period_days    = 1
-     assimilation_period_seconds = 0
-     vert_localization_coord     = 3
-     debug                       = 0
-     variables                   = ''
-   /
+.. _vert_interp:
 
-+-----------------------+-----------------------+-----------------------+
-| Item                  | Type                  | Description           |
-+=======================+=======================+=======================+
-| roms_filename         | character(len=256)    | This is the name of   |
-|                       |                       | the file used to      |
-|                       |                       | provide information   |
-|                       |                       | about the ROMS        |
-|                       |                       | variable dimensions,  |
-|                       |                       | etc.                  |
-+-----------------------+-----------------------+-----------------------+
-| assi                  | integer               | Combined, these       |
-| milation_period_days, |                       | specify the width of  |
-| assimi                |                       | the assimilation      |
-| lation_period_seconds |                       | window. The current   |
-|                       |                       | model time is used as |
-|                       |                       | the center time of    |
-|                       |                       | the assimilation      |
-|                       |                       | window. All           |
-|                       |                       | observations in the   |
-|                       |                       | assimilation window   |
-|                       |                       | are assimilated.      |
-|                       |                       | BEWARE: if you put    |
-|                       |                       | observations that     |
-|                       |                       | occur before the      |
-|                       |                       | beginning of the      |
-|                       |                       | assimilation_period,  |
-|                       |                       | DART will error out   |
-|                       |                       | because it cannot     |
-|                       |                       | move the model 'back  |
-|                       |                       | in time' to process   |
-|                       |                       | these observations.   |
-+-----------------------+-----------------------+-----------------------+
-| variables             | character(:, 5)       | A 2D array of         |
-|                       |                       | strings, 5 per ROMS   |
-|                       |                       | variable to be added  |
-|                       |                       | to the dart state     |
-|                       |                       | vector.               |
-|                       |                       |                       |
-|                       |                       | #. ROMS field name -  |
-|                       |                       |    must match netCDF  |
-|                       |                       |    variable name      |
-|                       |                       |    exactly            |
-|                       |                       | #. DART QUANTITY -    |
-|                       |                       |    must match a valid |
-|                       |                       |    DART QTY_xxx       |
-|                       |                       |    exactly            |
-|                       |                       | #. minimum physical   |
-|                       |                       |    value - if none,   |
-|                       |                       |    use 'NA'           |
-|                       |                       | #. maximum physical   |
-|                       |                       |    value - if none,   |
-|                       |                       |    use 'NA'           |
-|                       |                       | #. case-insensitive   |
-|                       |                       |    string describing  |
-|                       |                       |    whether to copy    |
-|                       |                       |    the updated        |
-|                       |                       |    variable into the  |
-|                       |                       |    ROMS restart file  |
-|                       |                       |    ('UPDATE') or not  |
-|                       |                       |    (any other value). |
-|                       |                       |    There is generally |
-|                       |                       |    no point copying   |
-|                       |                       |    diagnostic         |
-|                       |                       |    variables into the |
-|                       |                       |    restart file. Some |
-|                       |                       |    diagnostic         |
-|                       |                       |    variables may be   |
-|                       |                       |    useful for         |
-|                       |                       |    computing forward  |
-|                       |                       |    operators,         |
-|                       |                       |    however.           |
-+-----------------------+-----------------------+-----------------------+
-| ve                    | integer               | Vertical coordinate   |
-| rt_localization_coord |                       | for vertical          |
-|                       |                       | localization.         |
-|                       |                       |                       |
-|                       |                       | -  1 = model level    |
-|                       |                       | -  2 = pressure (in   |
-|                       |                       |    pascals)           |
-|                       |                       | -  3 = height (in     |
-|                       |                       |    meters)            |
-|                       |                       | -  4 = scale height   |
-|                       |                       |    (unitless)         |
-|                       |                       |                       |
-|                       |                       | Currently, only 3     |
-|                       |                       | (height) is supported |
-|                       |                       | for ROMS.             |
-+-----------------------+-----------------------+-----------------------+
+.. function:: subroutine vert_interp(id, ens_size, lon_lat_vert, lon, lat, state, SSH, corners, status) 
 
-A more realistic ROMS namelist is presented here, along with one of the
-more unusual settings that is generally necessary when running ROMS. The
-*use_precomputed_FOs_these_obs_types* variable needs to list the
-observation types that are present in the ROMS verification observation
-file.
+   Performs vertical interpolation to the target depth at the 4 corners of the quad. 
 
-.. code-block:: fortran
+   :param id: State Variable ID (integer)
+   :param ens_size: Ensemble size (integer))
+   :param lon_lat_vert: lon, lat, vert of the point to interpolate (real(r8), dimension(3))
+   :param lon: Longitude indices of the 4 quad corners (integer, dimension(4))
+   :param lat: Latitude indices of the 4 quad corners (real(r8), dimension(3))
+   :param state: DART ensemble handle (type(ensemble_type))
+   :param SSH: SSH ensemble values at the quad corners (real(r8), dimension(4, ens_size))
+   :param corners: State ensemble values at the quad corners (real(r8), dimension(4, ens_size))
+   :param status: Interpolation status (integer)
+   :returns: Interpolated values if successful or a failure status.
 
-   &model_nml
-     roms_filename                = 'roms_input.nc'
-     assimilation_period_days     = 1
-     assimilation_period_seconds  = 0
-     vert_localization_coord      = 3
-     debug                        = 1
-     variables = 'temp',   'QTY_TEMPERATURE',          'NA', 'NA', 'update',
-                 'salt',   'QTY_SALINITY',            '0.0', 'NA', 'update',
-                 'u',      'QTY_U_CURRENT_COMPONENT',  'NA', 'NA', 'update',
-                 'v',      'QTY_V_CURRENT_COMPONENT',  'NA', 'NA', 'update',
-                 'zeta',   'QTY_SEA_SURFACE_HEIGHT'    'NA', 'NA', 'update'
-   /
-   &obs_kind_nml
-     evaluate_these_obs_types = ''
-     assimilate_these_obs_types =          'SATELLITE_SSH',
-                                           'SATELLITE_SSS',
-                                           'XBT_TEMPERATURE',
-                                           'CTD_TEMPERATURE',
-                                           'CTD_SALINITY',
-                                           'ARGO_TEMPERATURE',
-                                           'ARGO_SALINITY',
-                                           'GLIDER_TEMPERATURE',
-                                           'GLIDER_SALINITY',
-                                           'SATELLITE_BLENDED_SST',
-                                           'SATELLITE_MICROWAVE_SST',
-                                           'SATELLITE_INFRARED_SST'
-     use_precomputed_FOs_these_obs_types = 'SATELLITE_SSH',
-                                           'SATELLITE_SSS',
-                                           'XBT_TEMPERATURE',
-                                           'CTD_TEMPERATURE',
-                                           'CTD_SALINITY',
-                                           'ARGO_TEMPERATURE',
-                                           'ARGO_SALINITY',
-                                           'GLIDER_TEMPERATURE',
-                                           'GLIDER_SALINITY',
-                                           'SATELLITE_BLENDED_SST',
-                                           'SATELLITE_MICROWAVE_SST',
-                                           'SATELLITE_INFRARED_SST'
-   /
+   .. code-block:: fortran
+
+      ! Failure codes: model_interpolate 
+      integer, parameter :: QUAD_LOCATE_FAILED   = 13 
+      integer, parameter :: QUAD_EVALUATE_FAILED = 21 
+      integer, parameter :: SSH_QUAD_EVAL_FAILED = 34 
+      integer, parameter :: QUAD_MAYBE_ON_LAND   = 55 
+      integer, parameter :: OBS_TOO_DEEP         = 89
+
+   Assumes the model depth is ordered from deepest to shallowest. It also handles extrapolation
+   gracefully for values above or below the model domain.
+
+.. _compute_physical_depth:
+
+.. function:: subroutine compute_physical_depth(z_r, z_w)
+
+   Computes the physical depth (in meters) for ROMS vertical levels.
+
+   :param z_r: Depths at rho-points (real(r8), 3D array)
+   :param z_w: Depths at w-points (real(r8), 3D array)
+
+   Uses ROMS vertical transformation equations along with bathymetry and
+   surface elevation (`zeta`) to calculate the full 3D grid depth. Used in
+   both vertical interpolation and localization routines.
+
+.. _sensible_temp:
+
+.. function:: function sensible_temp(pot_temp, salinity, local_pres) result(sensible_temp)
+
+   Computes sensible (in-situ) temperature from local pressure, salinity, and 
+   poterntial temperature.
+
+   :param pot_temp: Potential temperature in C (real(r8))
+   :param salinity: Salinity Practical Salinity Scale 1978 (real(r8))
+   :param local_pres: Pressure in decibars (real(r8))
