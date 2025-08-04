@@ -1,14 +1,22 @@
+============
 ROMS-Rutgers
 ============
+
+.. contents:: 
+   :depth: 3
+   :local:
+
+Regional Ocean Modeling System 
+==============================
 The Regional Ocean Modeling System (ROMS) is a widely used, open-source, free-surface, 
 terrain-following, primitive equations ocean model designed for studying coastal and 
 regional ocean dynamics. It has been developed by an international community of 
 scientists and modelers since the late 1990s. Please visit `MyRoms <https://www.myroms.org/>`_
 and `ROMSwiki <https://www.myroms.org/wiki/Documentation_Portal>`_ for more information on the model.
 
-Key Features
-------------
-- **Terrain-following vertical coordinates (sigma coordinates):**  
+ROMS Key Features
+-----------------
+- **Terrain-following vertical (sigma) coordinates:**  
   ROMS uses a curvilinear vertical coordinate system that adapts to the ocean
   bottom topography, allowing for accurate representation of coastal and shelf
   processes.
@@ -40,25 +48,33 @@ questions, please reach out to the DART team at dart@ucar.edu
 
 Interface Overview
 ==================
-This module serves as the interface between ROMS and DART. 
+The ``ROMS_rutgers/mod_mod.f90`` is a module that serves as the interface between ROMS and DART. 
 It defines the set of routines that DART uses to interact with ROMS state variables, 
 perform interpolation, perturbations, metadata access, and read/write state data. It
 supports: 
 
-- Model initialization and state management
-- Observation-space interpolation of model state variables
-- Vertical coordinate transformation and interpolation
-- Mapping between DART's state vector and ROMS fields
+- Model initialization and state management,
+- Observation-space interpolation of model state variables,
+- Vertical coordinate transformation and interpolation,
+- Mapping between DART's state vector and ROMS fields.
 
-Unlike the UCLA ROMS-DART interface, this version **does not rely on precomputed observation-space values** 
-output by ROMS (e.g., from `MODname` in `s4dvar.in`). Instead, it **computes observation-space equivalents directly** 
-via interpolation routines implemented using the `quad_utils` module.
+Unlike the UCLA ROMS-DART interface, this version **does not rely on precomputed 
+observation-space values** output by ROMS (e.g., from `MODname` in `s4dvar.in`). 
+Instead, it **computes observation-space equivalents directly** 
+via interpolation routines implemented using the `quad_utils` module. Interpolation 
+to the observed location is done both horizontally and vertically. Observations outside the
+model domain or falling on masked grid cells are excluded from the assimilation process.
+
+.. warning::
+   This interface only supports **single time-level** variables in ROMS history files.
+   Variables with multiple time levels (e.g., leapfrog schemes in restart files) 
+   are **not supported** and may lead to incorrect assimilation behavior.
 
 
-Namelist Configuration (`model_nml`)
-------------------------------------
+Namelist Configuration: `model_nml`
+-----------------------------------
 The ROMS–DART interface is configured through the `model_nml` namelist. 
-This namelist is read from the file *input.nml*. Namelists start with an
+This namelist is read from the file `input.nml`. Namelists start with an
 ampersand '&' and terminate with a slash '/'. Character strings that
 contain a '/' must be enclosed in quotes to prevent them from
 prematurely terminating the namelist. 
@@ -166,33 +182,23 @@ Each variable entry consists of **five elements** (columns), listed in a single 
 
 Each variable must appear as a consecutive 5-element group in the flat `variables` array. The interface supports up to `MAX_STATE_VARIABLES`, each with 5 fields.
 
-Remarks
-^^^^^^^
-- Variables marked as `'NO_COPY_BACK'` are updated within the DART filter but are **not** written back to the ROMS restart file.
-- Only variables in **restart files** can be updated in ROMS. Ensure `roms_filename` points to a restart file 
-  (e.g., `roms_input.nc`) when using `'UPDATE'`.
-- Observation times are assimilated if they fall within `±0.5 × assimilation_period_days` from the model forecast time.
+.. note::
+    - Variables marked as `'NO_COPY_BACK'` are updated within the DART filter but are **not** written back to the ROMS restart file.
+      1990s
+    - Only variables in **restart files** can be updated in ROMS. Ensure `roms_filename` points to a restart file 
+      (e.g., `roms_input.nc`) when using `'UPDATE'`.
+    - Observation times are assimilated if they fall within `±0.5 × assimilation_period_days` from the model forecast time.
 
 
 Generating an Initial Ensemble
 ------------------------------
-
 The ROMS interface provides the ability to create an ensemble of initial ROMS
-history files from an initial file by using the
-``perturb_single_instance`` routine.
+history files from an initial file by using the ``perturb_single_instance`` routine.
 You can specify an ensemble of any size in the ``perturb_single_instance``
 namelist in ``input.nml`` and this program will randomly perturb the 
 temperature and salinity fields of an initial ROMS history file to generate 
 the ensemble. The size of the perturbation is set using the namelist parameter
 ``perturbation_amplitude`` and the resulting initial distribution is Gaussian. 
-
-.. note::
-   This DART-ROMS interface is designed to support **variables with a single time level**, 
-   as typically found in ROMS **history files**. It does **not** support variables that have 
-   multiple time levels (e.g., 2 or 3), which are common in ROMS **restart files** due to the 
-   leapfrog time-stepping scheme. Users must ensure that only single time-level variables are 
-   specified for assimilation. Multi-level time variables can lead to incorrect indexing or 
-   data interpretation during assimilation.
 
 
 Key Interface Routines
@@ -207,7 +213,7 @@ Key Interface Routines
 
    **Reads:**
      - `roms_filename` from `model_nml`
-     - ROMS netCDF file grid variables
+     - Grid variables from the ROMS netCDF file
 
    **Actions:**
      - Validates namelist variables 
@@ -217,7 +223,7 @@ Key Interface Routines
 
 .. _model_interpolate:
 
-.. function:: subroutine model_interpolate(state, location, obs_type, expected_obs, istatus)
+.. function:: subroutine model_interpolate(state, ens_size, location, obs_type, expected_obs, istatus)
 
    Interpolates the model state to a given physical location.
 
@@ -239,7 +245,7 @@ Key Interface Routines
 
 .. function:: subroutine get_state_meta_data(index_in, location, var_type)
 
-   Maps an index in the DART state vector to a physical model location.
+   Maps an index in the DART state vector to a physical model location and DART :code:`quantity`.
 
    :param index_in: Index in the state vector (integer)
    :param location: Output location (type(location_type))
@@ -300,3 +306,13 @@ Key Interface Routines
    :param pot_temp: Potential temperature in C (real(r8))
    :param salinity: Salinity Practical Salinity Scale 1978 (real(r8))
    :param local_pres: Pressure in decibars (real(r8))
+
+   This function is used to convert model potential temperature into in-situ temperature 
+   for comparison with observations reported at depth under local pressure.
+
+
+References
+==========
+- Shchepetkin, A.F. and McWilliams, J.C., 2005. The regional oceanic modeling
+  system (ROMS): a split-explicit, free-surface, topography-following-coordinate
+  oceanic model. *Ocean Modelling*, 9(4), pp.347-404.
