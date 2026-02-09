@@ -6,6 +6,8 @@ Supported Models
 DART supported models:
 
 - :doc:`9var/readme`
+- :doc:`aether_lat-lon/readme`
+- :doc:`aether_cube_sphere/readme`
 - :doc:`am2/readme`
 - :doc:`bgrid_solo/readme`
 - :doc:`cam-fv/readme`
@@ -40,7 +42,8 @@ DART supported models:
 - :doc:`pe2lyr/readme`
 - :doc:`POP/readme`
 - :doc:`pywatershed/readme`
-- :doc:`ROMS/readme`
+- :doc:`ROMS_rutgers/readme`
+- :doc:`ROMS_ucla/readme`
 - :doc:`rose/readme`
 - :doc:`seir/readme`
 - :doc:`simple_advection/readme`

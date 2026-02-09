@@ -22,6 +22,175 @@ individual files.
 
 The changes are now listed with the most recent at the top.
 
+**February 4 2026 :: IODA2obsq. Tag v11.21.1**
+
+New feature:
+  - Radiances added to pyjedi ioda2obsq tool for DART JEDI interoperability
+ 
+    *contributed by Stephen Herbener, as part of DART collaboration with JCSDA*
+
+Bug-fix:
+  - WRF model_mod bug-fix for 3D potential temperature interpolation
+
+**January 8 2026 :: ARVOR Float and SVP Drifters. Tag v11.20.0**
+
+New Features:
+
+  - ARVOR float observation converter
+  - SVP drifter observation converter
+  - csv read utilities
+
+Bug-fix:
+
+  - Remove format read for clamping values in parse_variables_clamp,
+    wrf, mpas, tiegcm that caused integers to be misread.
+
+**January 6 2026 :: DART Data Archive. Tag v11.19.3**
+
+- WRF tutorial updated to get data from data.dart.ucar.edu
+- Fix defaults for MOM6 assimilation period to 1 day
+
+**December 31 2025 :: Log DART version. Tag v11.19.2** 
+
+New Features:
+
+  - | Version of DART logged in program message 
+    | *contributed by Kamil Yousuf*
+  - Tests for parse_args_mod
+  - Remove close_ind array initialization for 3d sphere and 3d 
+    cartesian location_mods to improve get_close performance. 
+
+Bug-fixes:
+
+  - model_mod_check model_size collected in test initialization
+
+**December 3 2025 :: BAMS article. Tag v11.19.1**
+
+Documentation updates:
+
+  - How to cite DART
+  - Bulletin of the American Meteorological Society 2025 article
+
+Bug-fix:
+
+  - Assert sea surface height is present in the state for ROMS Rutgers 
+    model_interpolate
+
+**November 13 2025 :: HF Radar converter. Tag v11.19.0**
+
+New features:
+
+- High Frequency (HF) Radar ocean observation converter
+- ROMS–Rutgers: Option to use Sea Surface Height from the template file, 
+  assuming the ensemble mean is provided in that file.
+
+Bug-fix:
+
+- Corrected consistency check across restarts when fill or missing attributes are NaN. 
+
+**November 11 2025 :: Aether Cube Sphere. Tag v11.18.0**
+
+- Aether cube sphere interface added to DART.
+- SLANT_GPS_VTEC QTY and obs_def
+
+**November 3 2025 :: DART tutorial. Tag 11.17.0**
+
+- DART tutorial updated to QCEFF v11
+- DART tutorial now an extension of DART_LAB
+- Lorenz_96/work directory contains input files needed for DART_LAB6:DART_tutorial
+- PDF tutorial slides relocated to a separate repo: https://github.com/NCAR/dart-tutorial
+
+**October 10 2025 :: Bug-fix: MOM6 localization. Tag v11.16.1**
+
+- Fix state index passed to below_sea_floor
+- Convert state vertical location to meters inside get_close_state
+
+**October 2 2025 :: CrocoLake observation converter. Tag v11.16.0**
+
+- Observation converter for CrocoLake.
+
+*contributed by Enrico Milanese, Woods Hole Oceanographic Institution*
+
+**September 17 2025 :: Radiance Updates. Tag v11.15.0**
+
+Radiance updates:
+  - Enables microwave radiance emission for RTTOV13
+  - Allows user to bring in liquid/ice effective droplet radius from model as an alternative to the fixed default value
+  - Specifies the max cloud fraction from the model as the effective cloud fraction
+  - Fixes hydrometeor type 'hydrotable' to expect the order: rain, snow, graupel, cloud water cloud ice
+  - For visible radiance applies empirical 0.1 factor against snow when calculating total cloud ice
+  - Documentation rewritten to give an overview over capabilities, list advice, and give references to further material
+  - WRF model_mod: added type_clwde type_icede
+
+  *Developed in collaboration with Lukas Kugler*
+
+Documentation updates:
+  - Improved contributors guide 
+  - Default_model_mod routines docs improved for usage in model_mods
+  - Brief history of  DART extended to present day
+  - Duplicate/out-of-date location_mod doc remoted
+
+Bug fixes:
+  - Standard C compliance for gregorian_time.c
+  - obs_def_rttov_mod.f90 TOA indexing
+
+
+**August 28 2025 :: KDE and CICE-DART improvements. Tag v11.14.2**
+
+KDE performance improvements:
+  - Fixed ITP algorithm in the rootfinding mod, faster convergence.
+  - Namelist option for KDE to use 5th, 7th or 9th order Gaussian quadrature.
+  - Boundary correction has been updated to reduce unnecessary computation.
+  - Unused function removed.
+
+  *contributed by Ian Grooms*
+
+CICE-DART postprocessing improvements:
+  - Two new post processing options.
+
+  *contributed by Molly Wieringa*
+
+**August 27 2025 :: WOD bug-fix and QCEFF tolerance. Tag v11.14.1**
+
+Bug-fixes:
+  - WOD observation converter fixed to be compatible with WOD2023.   
+    *Contributed by Kate Boden, University of Colorado Boulder*
+  - Build fixes for ROMS observation converter, and CICE observation converter.
+
+QCEFF update:
+  - Reduced tolerance on convergence in normal_distribution_mod::inv_cdf.
+  - Early return if initial guess is correct.
+
+Documentation update:
+  - POP initial ensemble now available on Zenodoo.
+
+
+**August 19 2025 :: ROMS Rutgers. Tag v11.14.0**
+
+New Features:
+  - ROMS Rutgers interface
+
+Fixes:
+  - Limit number of resubmits in WRF-DART
+  - CLM documentation link fix 
+
+Developer tools:
+  - pyfortran utility to find unused routines
+
+**August 13 2025 :: IODA2obsq. Tag v11.13.0-pyjedi**
+
+- Initial pyjedi package for DART JEDI interoperability.
+- ioda2obsq tool for conventional observations.  
+
+*contributed by Stephen Herbener, DART collaboration with JCSDA*
+
+**July 30 2025 :: MOM6 interpolation bug-fixes. Tag v11.12.1**
+
+- Fixes quad points assignment in model_interpolate
+- Fixes u/v interpolation handle selection
+- Fixes get_close_state dry land distance setting
+- Fixes pressure calculation for sensible temperature
+
 **July 24 2025 :: MOM6 pseudo depth, MODIS ice surface temp. Tag v11.12.0**
 
 New features:
