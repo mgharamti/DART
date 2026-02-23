@@ -12,7 +12,7 @@ program create_identity_streamflow_obs
 ! observations are actually identity observations.
 !---------------------------------------------------------------------------
 
-use types_mod,              only : r8, missing_r8, i8
+use types_mod,              only : r8, i8
 use location_mod,           only : VERTISHEIGHT, location_type, get_location
 use utilities_mod,          only : nmlfileunit, do_nml_file, do_nml_term,        &
                                    initialize_utilities, finalize_utilities,     &
@@ -20,7 +20,7 @@ use utilities_mod,          only : nmlfileunit, do_nml_file, do_nml_term,       
                                    error_handler, E_ERR, E_MSG, open_file,       &
                                    find_textfile_dims, close_file 
 use time_manager_mod,       only : time_type, set_calendar_type, GREGORIAN,      &
-                                   increment_time, set_time, get_time, set_date
+                                   set_time, get_time, set_date
 use obs_sequence_mod,       only : obs_sequence_type, obs_type, read_obs_seq,    &
                                    static_init_obs_sequence, write_obs_seq,      &
                                    init_obs, init_obs_sequence, get_num_obs,     &
@@ -28,9 +28,7 @@ use obs_sequence_mod,       only : obs_sequence_type, obs_type, read_obs_seq,   
                                    get_num_copies, get_num_qc
 use obs_kind_mod,           only : QTY_STREAM_FLOW
 use obs_def_streamflow_mod, only : set_streamflow_metadata
-use obs_utilities_mod,      only : getvar_real, getvar_int, get_or_fill_QC,      &
-                                   add_obs_to_seq, create_3d_obs, getvar_int,    &
-                                   getdimlen, set_missing_name
+use obs_utilities_mod,      only : add_obs_to_seq, create_3d_obs, getdimlen
 use model_mod,              only : static_init_model, get_state_meta_data,       &
                                    get_number_of_segments
 use sort_mod,               only : index_sort

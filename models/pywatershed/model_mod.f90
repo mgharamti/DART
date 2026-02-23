@@ -13,30 +13,25 @@ use time_manager_mod,      only : time_type, set_time, set_calendar_type,       
                                   set_date, print_date, increment_time 
 use utilities_mod,         only : do_nml_file, do_nml_term, E_ERR, E_MSG,            &
                                   nmlfileunit, find_namelist_in_file, to_upper,      &
-                                  check_namelist_read, file_exist, error_handler
-use         location_mod,  only : location_type, get_close_type, get_dist,           &
+                                  check_namelist_read, error_handler
+use         location_mod,  only : location_type, get_close_type,                     &
                                   loc_get_close_obs => get_close_obs,                &
                                   loc_get_close_state => get_close_state,            &
                                   convert_vertical_obs, convert_vertical_state,      &
-                                  set_location, set_location_missing, VERTISHEIGHT,  &
+                                  set_location, VERTISHEIGHT,                        &
                                   write_location
 use mpi_utilities_mod,     only : my_task_id 
 use netcdf_utilities_mod,  only : nc_add_global_attribute, nc_synchronize_file,      &
                                   nc_add_global_creation_time, nc_begin_define_mode, &
                                   nc_end_define_mode, nc_open_file_readonly,         &
-                                  nc_close_file, nc_get_global_attribute,            &
+                                  nc_close_file,                                     &
                                   nc_get_dimension_size, nc_get_variable, nc_check,  &
                                   nc_get_attribute_from_variable, nc_synchronize_file 
-use         obs_kind_mod,  only : get_index_for_quantity, get_name_for_quantity,     &
-                                  get_name_for_quantity, QTY_STREAM_FLOW,            &
-                                  get_quantity_for_type_of_obs
+use         obs_kind_mod,  only : QTY_STREAM_FLOW
 use ensemble_manager_mod,  only : ensemble_type
-use distributed_state_mod, only : get_state
 use state_structure_mod,   only : add_domain, get_domain_size, get_index_start,      &
                                   get_index_end, get_num_domains, get_num_variables, &
-                                  get_num_dims, get_dim_name, get_dim_length,        &
                                   get_variable_name, get_model_variable_indices,     &
-                                  get_varid_from_kind, get_dart_vector_index,        &
                                   get_variable_size, state_structure_info
 use default_model_mod,     only : adv_1step, end_model, nc_write_model_vars,         & 
                                   MAX_STATE_VARIABLE_FIELDS_CLAMP,                   &
@@ -45,7 +40,7 @@ use default_model_mod,     only : adv_1step, end_model, nc_write_model_vars,    
                                   parse_variables_clamp 
 use dart_time_io_mod,      only : write_model_time
 use random_seq_mod,        only : random_seq_type, init_random_seq,                  &
-                                  random_gaussian, random_gamma
+                                  random_gaussian
 use netcdf
 
 implicit none
