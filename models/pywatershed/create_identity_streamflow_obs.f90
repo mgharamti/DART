@@ -202,7 +202,7 @@ call nc_get_variable(ncid, 'seg_lons'        , lon, routine)
 call nc_get_variable(ncid, 'seg_elev'        , elv, routine)
 call nc_get_variable(ncid, 'poi_gage_segment', segGauge, routine)
 
-call get_string_array(ncid, 'IDLength', 'poi_gauges', gID)
+call get_string_array(ncid, 'IDLength', ngages, 'poi_gauges', gID)
 
 do igage = 1, ngages
    gauge_strings(segGauge(igage)) = gID(igage)
@@ -344,8 +344,8 @@ FILELOOP : do ifile = 1, nfiles
    endif 
 
    ! Read the time and station string arrays
-   call get_string_array(ncid, 'stationIdStrLen', 'stationId', stations)
-   call get_string_array(ncid, 'timeStrLen'     , 'time'     , time_str)
+   call get_string_array(ncid, 'stationIdStrLen', nobs, 'stationId', stations)
+   call get_string_array(ncid, 'timeStrLen'     , nobs, 'time'     , time_str)
 
    call nc_close_file(ncid, routine) 
 
@@ -496,9 +496,9 @@ end function estimate_total_obs_count
 ! -------------------------------------
 ! Read array of strings from input file
 
-subroutine get_string_array(ncid, dimname, varname, string_var)
+subroutine get_string_array(ncid, dimname, dimlen, varname, string_var)
 
-integer,          intent(in)    :: ncid
+integer,          intent(in)    :: ncid, dimlen
 character(len=*), intent(in)    :: dimname, varname
 character(len=*), intent(inout) :: string_var(:)
 
@@ -514,7 +514,7 @@ call nc_check(io, routine, 'inq_varid "'//varname//'"')
 io = nf90_get_var(ncid, varid, string_var)
 call nc_check(io, routine, 'get_var "'//varname//'"')
 
-do i = 1, nobs
+do i = 1, dimlen
    string_var(i) = adjustl(string_var(i))
 enddo 
       

@@ -23,7 +23,7 @@ HRU (Hydrologic Response Unit) domain which includes groundwater. Groundwater
 variables from more than one basin could contribute to a single streamflow
 segment (i.e., stream or link). The localization code follows the
 *Along-The-Stream Localization (ATS)* developed by
-`El Gharamti et al. (2021) <https://hess.copernicus.org/articles/25/5315/2021/hess-25-5315-2021.html>`_
+`El Gharamti et al. (2021) <https://doi.org/10.5194/hess-25-5315-2021>`_
 
 Namelist
 --------

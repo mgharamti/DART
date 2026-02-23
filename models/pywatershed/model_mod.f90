@@ -757,6 +757,8 @@ integer,             intent(out), optional :: qty_type
 
 integer :: iloc, jloc, kloc, varid, idom
 
+if (.not. module_initialized) call static_init_model
+
 call get_model_variable_indices(index_in, iloc, jloc, kloc, varid, idom, qty_type)
 
 location = domain_info(idom)%location(iloc, jloc, kloc)
@@ -795,14 +797,14 @@ if (.not. module_initialized) call static_init_model
 interf_provided = .true. 
 
 ! Generate a unique (but repeatable - if task count is same)
-! seed for each ensemble member
+! seed for each task
 if (seed_unset) then
    seed = (my_task_id()+1) * 1000
    seed_unset = .false.
 endif
 
 call init_random_seq(random_seq, seed)
-seed = seed + 1  ! next ensemble member gets a different seed
+seed = seed + 1  
 
 pert = model_perturbation_amplitude
 
@@ -943,7 +945,7 @@ call link_tree(seg_index, max_link_distance, depth, &
                    reach_length, stream_nclose, stream_indices, stream_distances)
 
 ! Add the close downstreams ones to the list
-call downstream_links(seg_index, max_link_distance, depth, &
+call downstream_links(seg_index, max_link_distance, &
                    stream_nclose, stream_indices, stream_distances)
 
 num_close                  = stream_nclose
@@ -1006,12 +1008,11 @@ end subroutine link_tree
 !-----------------------------------------------------------------------
 ! Routine to collect the close downstream segments from me
 
-subroutine downstream_links(my_index, reach_cutoff, depth, &
+subroutine downstream_links(my_index, reach_cutoff, &
                     nclose, close_indices, distances)
 
 integer,     intent(in)    :: my_index
 real(r8),    intent(in)    :: reach_cutoff   ! meters
-integer,     intent(in)    :: depth
 integer,     intent(inout) :: nclose
 integer(i8), intent(inout) :: close_indices(:)
 real(r8),    intent(inout) :: distances(:)
@@ -1082,12 +1083,10 @@ end do
 ! Loop over my_task_indices and find matches using the map
 do i = 1, size(my_task_indices)
   idx = my_task_indices(i)
-  if (idx >= il .and. idx <= ir) then
-    if (index_map(idx) > 0) then
-      num_close = num_close + 1
-      close_ind(num_close) = i 
-      dist(num_close) = superset_distances(index_map(idx))
-    end if
+  if (index_map(idx) > 0) then
+     num_close = num_close + 1
+     close_ind(num_close) = i 
+     dist(num_close) = superset_distances(index_map(idx))
   end if
 end do
 
