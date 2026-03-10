@@ -57,7 +57,7 @@ searched first, then ``wrfinput_d03``, ``wrfinput_d02``, and finally
 
 .. Important::
    
-   The model interface code and ` bash shell scripting <https://github.com/NCAR/DART/tree/main/models/wrf/shell_scripts>`__ are compatible for both single and mutliple domains.
+   The model interface code and `bash shell scripting <https://github.com/NCAR/DART/tree/main/models/wrf/shell_scripts>`__ are compatible for both single and mutliple domains.
    However, prior to DART release v11.20.*, the shell scripting was only compatible with a single
    domain.  If you are working with multiple domains make sure you are using the proper
    DART version.
