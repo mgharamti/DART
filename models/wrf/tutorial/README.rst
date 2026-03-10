@@ -525,13 +525,14 @@ changes:
 +--------------------+---------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
 | gen_pert_bank.sh   | datea = 2024051900                          | Set to the starting time of the tutorial.                                                                                             |
 +--------------------+---------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
-| gen_pert_bank.sh   | num_ens = 60                                | Total number of perturbation members. Set to 3-4X that of model ensemble (20)                                                         |
+| gen_pert_bank.sh   | num_ens = 60  (automatically set)           | Total number of perturbation members. Automatically set to 3x model ensemble members (20).                                            |
 +--------------------+---------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
 | gen_pert_bank.sh   | paramfile = /full/path/to/param.sh          | Script sources information from param.sh file.                                                                                        |
 +--------------------+---------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
 | gen_pert_bank.sh   | savedir = ${PERTS_DIR}/work/boundary_perts. | Location of perturbation bank.                                                                                                        |             
 +--------------------+---------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
-| add_bank_pert.ncl  | bank_size = 60                              | Recommended to set to same value as gen_pert_bank.sh num_ens value (60). Cannot be greater than total perturbations in bank.          |
+| add_bank_pert.ncl  | bank_size = 60  (automatically set)         | Automatically set to 3x model ensemble members (20). If set manually it is recommended to set to the same value as gen_pert_bank.sh   |
+|                    |                                             | num_ens value.  Cannot be greater than total perturbations in bank.                                                                   |
 +--------------------+---------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------+ 
 
 The setup is now complete. The tarred tutorial file provides the grib files and  
@@ -633,8 +634,9 @@ starting time and the path to the  ``param.sh`` script.
 
 The ``init_ensemble_var.sh`` script adds perturbations to the single instance
 WRF domain (generated in Step 2) which generates an ensemble of WRF simulations.
-Please note that the perturbations are added to the WRF state  randomly, thus the results of the 
-tutorial should be similar each time it is run, but it will not be deterministic.  
+Please note that the perturbations are chosen randomly and then added to the WRF state, thus 
+the results of the tutorial should be qualitatively the same each time it is run, but 
+because of the randomly chosen perturbations the DA results and diagnostics will not be deterministic.  
 If there are multiple domains (like in this tutorial example) the code will automatically
 apply the perurbations from the parent domain to the nested domains through
 downscaling.  This ensures that the location of perturbations are consistent across

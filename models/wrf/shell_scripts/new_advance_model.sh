@@ -516,7 +516,7 @@ EOF
 #  Note the static perturbation path is defined in the ncl script
           cp fg wrfvar_output
           cp "${CENTRALDIR}/add_bank_perts.ncl" .
-          cmd3="ncl 'MEM_NUM=${ensemble_member}' 'PERTS_DIR=\"${PERTS_DIR}/work/boundary_perts\"' ${CENTRALDIR}/advance_temp${ensemble_member}/add_bank_perts.ncl"
+          cmd3="ncl 'MEM_NUM=${ensemble_member}' 'PERTS_DIR=\"${PERTS_DIR}/work/boundary_perts\"' 'NUM_ENS=${NUM_ENS}' ${CENTRALDIR}/advance_temp${ensemble_member}/add_bank_perts.ncl"
           $REMOVE nclrun3.out
 
           cat > nclrun3.out << EOF

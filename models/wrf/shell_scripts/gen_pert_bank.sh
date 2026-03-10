@@ -34,21 +34,13 @@ IC_HORIZ_SCALE=0.8
 IC_VERT_SCALE=0.8
 
 
-# Number of perturbations to generate, suggest 3-4X the ensemble size. 
+# Number of perturbations to generate, imposing 3X the ensemble size. 
 # Recommended to test single member first to confirm functionality and desired performance.
 
-num_ens=60
-
-
-# Get wrfinput_d01 file directly from the 'mean' file generated from real.exe during gen_retro_icbc.sh
-# set wrfin_dir = ${work_dir}/wrfin
-ASSIM_INT_HOURS=6
-
-module load nco
+num_ens=$(($NUM_ENS * 3))
 
 mkdir -p "${save_dir}"
 cd "$work_dir" || exit 1
-cp "${TEMPLATE_DIR}/input.nml.template" input.nml
 
 # get a wrfdate and parse
 read -r -a gdate < <(echo "$datea 0h -g" | "${DART_DIR}/models/wrf/work/advance_time")
@@ -130,12 +122,11 @@ EOF
 #PBS -o gen_pert_bank_mem${n}.out
 #PBS -l select=1:ncpus=4:mpiprocs=4
 #PBS -k eod
-#PBS -V
 #=================================================================
 
 cd "${work_dir}/mem_${n}" || exit 3
 
-mpiexec -n 1 -ppn 1 ./da_wrfvar.exe >& output.wrfvar
+mpiexec -n 4 -ppn 4 ./da_wrfvar.exe >& output.wrfvar
 mv wrfvar_output wrfinput_d01
 
 # Extract only the fields that are updated by wrfvar, then diff to generate the pert file for this member

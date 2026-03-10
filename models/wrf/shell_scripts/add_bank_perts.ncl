@@ -15,6 +15,7 @@ begin
 
  ens_mem_num = ""+MEM_NUM
  pert_bank_path = PERTS_DIR
+ num_ens = NUM_ENS 
 
 ;perturbation scaling: default tutorial settings
  scale_T = 1.3
@@ -31,9 +32,10 @@ begin
 ; scale_Q = 0.0
 ; scale_M = 0.0
 
-; for random pert, pick from larger bank
- bank_size = 60
+; Enforce 3x perturbations  
+ bank_size = num_ens * 3
  con  = bank_size / 32766.0      ; 32766.0 forces a 0.0 to 1.0 range
+
 ; get a seed
  wallClock = stringtoint(systemfunc("date -u +%N"))
  srand(wallClock)
