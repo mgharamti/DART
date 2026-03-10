@@ -688,7 +688,7 @@ Step 5: Prepare observations [Informational Only]
    required tutorial steps.  If you are interested in customizing a WRF-DART experiment
    for your own application, steps 5 and 6 provide useful guidance. The obs_seq.out files 
    provided in this tutorial are generated from  the NCEP PREPBUFR data files which are
-   located at the `NSF NCAR Research Data Archive <https://rda.ucar.edu>`__ 
+   located at the `NSF NCAR Geoscience Data Exchange (GDEX) <https://gdex.ucar.edu/>`__ 
    (ds090 or ds337).   Although we  **do not** provide explicit instructions here to 
    reconstruct the tutorial obs_seq.out files, you can follow the links for the prepbufr
    observation converter provided below. We used prepbufr data from the 
@@ -708,8 +708,8 @@ because it requires the installation of an externally hosted package, and also
 involves a 2-stage conversion process (native format-->ascii-->obs_seq)
 as described below:
 
-- Download PREPBUFR data from the NSF NCAR RDA `ds090 <NCEP+NCAR_obs_>`_  or `ds337 <NCEP_obs_>`_ 
-- Unzip RDA files, and locate the prepqm[YYMMDDHH].nr files of interest
+- Download PREPBUFR data from the NSF NCAR GDEX `ds090 <NCEP+NCAR_obs_>`_  or `ds337 <NCEP_obs_>`_ 
+- Unzip GDEX files, and locate the prepqm[YYMMDDHH].nr files of interest
 - Install NCEP PREPBUFR text converter package (``install.sh``)
   See :doc:`prepbufr <../../../observations/obs_converters/NCEP/prep_bufr/prep_bufr>`
 - Run PREPBUFR text conversion scripting (``prepbufr.csh``) 
@@ -734,7 +734,7 @@ An introduction to important namelist variables that control the operation of th
 operator are located in the :ref:`WRF namelist documentation<wrfnamelist>`.
 
 
-The ``obs_seq.out`` files provided with the tutorial contains over
+The ``obs_seq.out`` files provided with the tutorial contain over
 10 different observation types (e.g. RADIOSONDE, AIRCRAFT etc). 
 Here we examine a single temperature observation type. Please note 
 that METAR type observations are not used in this tutorial example, 
@@ -976,7 +976,7 @@ this file there is the section:
       verbose           = .false.
       /
 
-These settings create a prior inflation file with a inflation mean of 1.0
+These settings create a prior inflation file with an inflation mean of 1.0
 and a prior inflation standard deviation of 0.6. These are reasonable
 defaults to use. The *input_state_files* variable controls which file to
 use as a template. You can either modify this namelist value to point to
