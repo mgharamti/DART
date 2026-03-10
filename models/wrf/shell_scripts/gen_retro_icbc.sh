@@ -36,7 +36,6 @@
 #PBS -j oe
 #PBS -k eod
 #PBS -l select=5:ncpus=60:mpiprocs=60
-#PBS -V
 
 set -uo pipefail
 
@@ -53,12 +52,6 @@ paramfile="/glade/derecho/scratch/bmraczka/WRFv4.5_nested_bash/scripts/param.sh"
 echo "Sourcing parameter file: $paramfile"
 source "$paramfile"
 
-# Backups if REMOVE/MOVE/LINK not set in param.sh
-: "${REMOVE:=rm -rf}"
-: "${MOVE:=mv -f}"
-: "${COPY:=cp -p}"
-: "${LINK:=ln -sf}"
-
 DART_ADVANCE_TIME="${DART_DIR}/models/wrf/work/advance_time"
 
 #################################################################################
@@ -67,8 +60,8 @@ DART_ADVANCE_TIME="${DART_DIR}/models/wrf/work/advance_time"
 
 cd "$ICBC_DIR"
 $COPY "${TEMPLATE_DIR}/namelist.input.meso"  namelist.wps.check
-hybrid_opt=$(grep '^[[:space:]]*hybrid_opt[[:space:]]*=' namelist.wps.check | tail -n 1 | cut -d= -f2 | cut -d, -f1 | xargs)
-use_theta_m=$(grep '^[[:space:]]*use_theta_m[[:space:]]*=' namelist.wps.check | tail -n 1 | cut -d= -f2 | cut -d, -f1 | xargs)
+hybrid_opt=$(grep "hybrid_opt" namelist.wps.check | cut -d= -f2 | xargs)
+use_theta_m=$(grep "use_theta_m" namelist.wps.check | cut -d= -f2 | xargs)
 $REMOVE namelist.wps.check
 
 if [[ "$hybrid_opt" != 0 ]]; then
@@ -203,7 +196,7 @@ EOF
     # Compute end of assimilation window
     datef=$(echo "$datea $ASSIM_INT_HOURS" | "$DART_ADVANCE_TIME")
     # Gregorian version for wrfbdy naming
-    read -r gdayf gsecf _rest < <(echo "$datef 0 -g" | "$DART_ADVANCE_TIME")
+    read -r gdayf gsecf _ < <(echo "$datef 0 -g" | "$DART_ADVANCE_TIME")
     hh=${datea:8:2}
 
     ###########################################################################
@@ -279,7 +272,7 @@ EOF
         run_real_via_pbs
 
         # On return, move wrfinput/wrfbdy to appropriate locations
-        read -r gday gsec _rest < <(echo "$date1 0 -g" | "$DART_ADVANCE_TIME")
+        read -r gday gsec _ < <(echo "$date1 0 -g" | "$DART_ADVANCE_TIME")
 
         # Move wrfinput_d01/d02
         if [[ -e wrfinput_d01 ]]; then
