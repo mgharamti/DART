@@ -281,6 +281,14 @@ bash  ``export BASE_DIR=<path_to_your_working_directory>``
        mkdir $BASE_DIR/scripts
        cp -R $DART_DIR/models/wrf/shell_scripts/* $BASE_DIR/scripts
 
+.. Note::
+
+   There are also csh scripts available to run the nested tutorial example
+   located here $DART_DIR/models/wrf/shell_scripts_csh/. We recommend
+   the use of the bash scripting as shown in Step 3 as it has improved compatiblity
+   with most HPC systems.
+
+
 
 Build or locate the WRF, WPS and WRFDA executables
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -312,18 +320,23 @@ about building these packages.
  configure WPS, and option 34 (gnu dmpar) to configure WRFDA. You will need the location
  of the WRF, WPS,and WRFDA builds to customize the *param.sh* script in the next step.
 
+ You should be compiling the traditional version of WRF designed for standard WRF forecasts
+ and data assimilation workflows.  These include executables such as **real.exe**, **wrf.exe**, 
+ and **da_wrfvar.exe**.  You **should not compile** and use the wrfplus version of the model designed
+ for variation assimilation algorithms (wrfplus.exe).
+
  Using the gfortan compiler on Derecho required custom flag settings to successfully
  compile the WRF, WPS and WRFDA executables. For more information please see  
  NCAR/DART `github issue 627. <https://github.com/NCAR/DART/issues/627>`__ 
    
 
-Configure ``$BASE_DIR/scripts/param.sh`` with proper paths and varaibles
+Configure ``$BASE_DIR/scripts/param.sh`` with proper paths and variables
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The param.sh script sets variables which will be read by other
 WRF-DART scripts. There are some specific parameters for either the
 Derecho supercomputing system using the
-`PBS <https://www.pbsworks.com/>`__ queueing system or the
+`PBS <https://en.wikipedia.org/wiki/Portable_Batch_System/>`__ queueing system or the
 (decommissioned) Yellowstone system which used the *LSF* queueing
 system. If you are not using Derecho, you may still want to use this
 script to set your queueing-system specific parameters.
@@ -348,7 +361,8 @@ script to set your queueing-system specific parameters.
  +-------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------+
  | ASSIM_INT_HOURS         | The frequency of assimilation steps, and temporal spacing between observations. This tutorial uses 6 hours.                                         |
  +-------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------+
- | ADAPTIVE_INFLATION      | A DART tool used to adjust ensemble spread. Set to 1 (on) for assimilation mode and set to 0 (off) for forecast mode.                               |
+ | ADAPTIVE_INFLATION      | A DART tool used to adjust ensemble spread. We recommend to set to 1 (on) for assimilation mode in this example, however, users may opt to turn     |
+ |                         | inflaton off for experiments where ensemble spread is large or model errors are small. The inflaton must be set to 0 (off) during forecast mode.    |
  +-------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------+
  | NUM_DOMAINS             | The number of WRF domains. This tutorial uses a 2 domain setup (parent d01, nested d02). Scripting works for both single and multi-domains.         |
  +-------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------+
@@ -502,7 +516,8 @@ changes:
 +====================+=============================================+=======================================================================================================================================+
 | driver.sh          | datefnl = 2024051912                        | Change to the final assimilation target date. In this example observations are assimilated at time steps 2024051906 and 2024051912.   |
 +--------------------+---------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
-| gen_retro_icbc.sh  | datea   = 2024051900                        | Set to the starting time of the tutorial.  This is the beginning time of the ensemble spinup.                                         |
+| gen_retro_icbc.sh  | datea   = 2024051900                        | Set to the starting time of the tutorial.  This is the beginning time of the ensemble spinup, which runs for 6 hours until the first  |
+|                    |                                             | assimilation time step at 2024051906.                                                                                                 |
 +--------------------+---------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
 | gen_retro_icbc.sh  | datefnl = 2024052000                        | Set to the final time of the tutorial. This is the end of the forecast mode.                                                          |
 +--------------------+---------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
