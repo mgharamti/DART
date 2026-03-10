@@ -11,24 +11,36 @@
 
 set -uo pipefail
 
-myname="$0"
+myname="$(basename "$0")"
+
+# ---- check required argument ----
+if [[ $# -lt 1 ]]; then
+    echo
+    echo "ERROR: expected paramfile argument."
+    echo "Usage: $myname <parameter_filename>"
+    echo
+    exit 1
+fi
+
 paramfile="$1"
 
-if [[ $# -eq 1 ]]; then
-   echo
-   echo "$myname starting at $(date)"
-   echo "parameter filename is $paramfile"
-   echo
-else
-   echo
-   echo "usage: $(basename "$myname") <parameter_filename>"
-   echo
-   exit 1
+# ---- verify file exists ----
+if [[ ! -f "$paramfile" ]]; then
+    echo
+    echo "ERROR: parameter file '$paramfile' does not exist."
+    echo "Usage: $myname <parameter_filename>"
+    echo
+    exit 1
 fi
+
+echo
+echo "$myname starting at $(date)"
+echo "parameter filename is $paramfile"
+echo
+
 
 # Load parameter file
 source "$paramfile"
-COPY="cp -rL"
 
 # Create directories
 dirs=(
