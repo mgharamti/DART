@@ -1370,7 +1370,7 @@ following within Matlab being sure to modify ``fname`` for your case:
 
 Another useful application of the **link_obs.m** script is to visualize
 the improvement of the model estimate of the observation through the 1:1 plot.
-One way to do this is to compare the prior and posterior model estimate of the
+One way to do this is to compare the prior and posterior model estimate of
 either the ensemble mean or a single ensemble member. In the example figures below,
 a 1:1 plot was generated for the prior and posterior values for ensemble member 3.
 (Left Figure: ``CopyString =  'prior ensemble member 3'`` and Right Figure:
@@ -1453,7 +1453,7 @@ This time evolving diagnostic works best when all the assimilation times
 steps are combined into one **obs_diag.output.nc** file, however the 
 **obs_diag_output.nc** files automatically generated during the tutorial are for 
 indivdual assimilation times.  We leave it as an exercise on your own to
-generate a custom **obs_diag_output.nc** that combines several differenct assimilation
+generate a custom **obs_diag_output.nc** that combines several different assimilation
 time steps.  Please use the instructions in the next section as a guide.
 
 
