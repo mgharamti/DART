@@ -41,6 +41,7 @@ num_ens=$(($NUM_ENS * 3))
 
 mkdir -p "${save_dir}"
 cd "$work_dir" || exit 1
+cp "${TEMPLATE_DIR}/input.nml.template" input.nml
 
 # get a wrfdate and parse
 read -r -a gdate < <(echo "$datea 0h -g" | "${DART_DIR}/models/wrf/work/advance_time")

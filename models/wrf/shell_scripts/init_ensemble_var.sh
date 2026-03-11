@@ -7,10 +7,9 @@
 #                         conditions from the WRF-VAR system.
 #                         (perts are drawn from the perturbation bank)
 
-
 main() {
 
-set -ex
+set -uo pipefail
 
 # Read in arguments and parameter settings
 initial_date=$1
@@ -216,23 +215,23 @@ cat > $RUN_DIR/rt_assim_init_$mem.sh << EOF
 
        dn=$NUM_DOMAINS
        while (( dn > 1 )); do
-     
+    
          # Prep domain files for ndown.exe
          # input files of wrfout_d01_[time] (parent domain), wrfndi_d02 (nested domain)
          # output files of wrfinput_d02 and wrfbdy_d02
          
          dchar="\$(echo "\$dn + 100" | bc | cut -b2-3)"
-    
+
          $LINK wrfinput_d01 wrfout_d01_$yyyy-$mm-${dd}_$hh:00:00
     
          $COPY $OUTPUT_DIR/$initial_date/wrfinput_d${dchar}_${gdate[0]}_${gdate[1]}_mean \
                $RUN_DIR/advance_temp$mem/wrfndi_d02
     
          echo Running ndown.exe to downscale perturbed wrfinput_d01 onto wrfinput_d$dchar for member $mem
-    
+
          # Downscale parent domain to nested domain (wrfinput_d{??})
          mpiexec -n 4 -ppn 4 ./ndown.exe  > ndown_d${dchar}.out
-    
+
          $MOVE   wrfinput_d02 wrfinput_d$dchar
          $MOVE   wrfbdy_d02   wrfbdy_d$dchar    
          $REMOVE wrfndi_d02
