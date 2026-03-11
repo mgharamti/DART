@@ -132,7 +132,7 @@ fi
 # System commands
 # -----------------------------------------------------------
 export REMOVE='rm -rf'
-export COPY='cp -pfr'
+export COPY='cp -Lpfr'
 export MOVE='mv -f'
 export LINK='ln -fs'
 export WGET='/usr/bin/wget'
