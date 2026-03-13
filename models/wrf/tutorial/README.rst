@@ -1061,7 +1061,8 @@ the queue submission.
 
 The main ``driver.sh`` script  expects a starting date (YYYYMMDDHH) and 
 the ``param.sh`` file as command line arguments. The run time output is 
-redirected to a file named ``run.out`` as:
+redirected to a file named ``run.out``. **To assimilate the observations
+perform the following commands:** 
 
 ::
 
