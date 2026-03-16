@@ -53,8 +53,8 @@ There are currently some additional observation sources and types which
 we are in the process of collecting information and conversion programs
 for and which will eventually be added to this directory. In the
 meantime, if you have converters for data or interest in something that
-is not in the repository, please `email the DART
-group <mailto:dart@ucar.edu>`__.
+is not in the repository, please email the DART
+group at dart@ucar.edu.
 
 
 Data Sources and Formats
