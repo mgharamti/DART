@@ -1000,8 +1000,6 @@ Run the following commands with the dates for this particular tutorial:
    cd $BASE_DIR/rundir
    cp ../output/2024051900/wrfinput_d01_154636_0_mean ./wrfinput_d01
    cp ../output/2024051900/wrfinput_d02_154636_0_mean ./wrfinput_d02
-   cp ../output/2024051900/wrfinput_d01_154636_0_mean $DART_DIR/models/wrf/work/wrfinput_d01
-   cp ../output/2024051900/wrfinput_d02_154636_0_mean $DART_DIR/models/wrf/work/wrfinput_d02
    ./fill_inflation_restart
    mkdir ../output/2024051900/Inflation_input
    mv input_priorinf_*.nc ../output/2024051900/Inflation_input/
@@ -1111,7 +1109,7 @@ step within the atmospheric DA literature.  Here, we reuse the same ``driver.sh`
 script as described in Step 8 except we modify the namelist settings to switch
 from assimilate to forecast mode. 
 
-First modify ``input.nml`` for both within ``${RUN_DIR}`` and ``${TEMPLATE_DIR}`` such that
+First modify ``input.nml`` within ``${RUN_DIR}`` such that
 the adaptive inflation is turned off by setting ``inf_flavor = 0``.
 In addition, set all observation types to be  **evaluated** as shown below:
 
@@ -1178,7 +1176,7 @@ Then execute the following command:
 
 To monitor the progress and success of the scripts follow the same guidance as described in Step 8.
 Remember all the steps and output files produced during forecast mode are nearly identical to assimilation mode.
-The only difference is that the scripting will not update the WRF posterior state.  We are performing
+The only difference is that the scripting will not update the WRF state.  We are performing
 an extended forecast (free) simulation.
 
 .. Important::
