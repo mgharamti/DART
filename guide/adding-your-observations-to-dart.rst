@@ -20,3 +20,16 @@ different information in an attempt to collect the information needed to apply
 the operator. If the model cannot provide any of the required information, the
 forward operator fails, the DART QC for that observation is set to the
 appropriate value, and the program continues.
+
+
+A note on identity observations
+-------------------------------
+
+Identity observations are a special type of observation, where the location and 
+value of the observation is identical to the state. They are used to sample the 
+model state directly, essentially creating “observations” that are exact copies 
+of certain state variables. That is, the forward operator H(x) is the identity 
+matrix. Identity observations do not get listed as a type in the header of an 
+observation sequence file, they are denoted in a given observation by a type
+of -x where x is the index in the DART state vector that the observation 
+corresponds to.
