@@ -94,7 +94,7 @@ increment_vars_b=( U V PH THM MU QVAPOR QCLOUD QRAIN QICE QSNOW QGRAUP QNICE QNR
 # -----------------------------------------------------------
 SUPER_PLATFORM="derecho"
 COMPUTER_CHARGE_ACCOUNT=PXXXXXXXX
-EMAIL=bmraczka@ucar.edu
+EMAIL=userid@email
 
 if [[ "$SUPER_PLATFORM" == "derecho" ]]; then
 

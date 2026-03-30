@@ -334,10 +334,10 @@ if [[ $ADAPTIVE_INFLATION == 1 ]]; then
        dchar=$(echo $dn + 100 | bc | cut -b2-3)
        
        if (( NUM_DOMAINS ==  1 )); then
-	  if [[ -e output_postinf_mean.nc ]]; then
-             echo "Detected output_postinf_mean.nc during post_da_diags moves"   
+	  if [[ -e output_priorinf_mean.nc ]]; then
+             echo "Detected output_priorinf_mean.nc during post_da_diags moves"   
           else
-             echo "Error: Missing output_postinf_mean.nc during post_da_diags moves"
+             echo "Error: Missing output_priorinf_mean.nc during post_da_diags moves"
              exit	     
           fi     
           old_file=( input_postinf_mean.nc  input_postinf_sd.nc  input_priorinf_mean.nc  input_priorinf_sd.nc )
