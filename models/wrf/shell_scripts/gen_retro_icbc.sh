@@ -47,19 +47,19 @@ echo "gen_retro_icbc.sh is running in $(pwd)"
 
 datea=2024051812         # initial cycle time (YYYYMMDDHH)
 datefnl=2024052018       # final cycle time   (YYYYMMDDHH)
-paramfile="/glade/derecho/scratch/bmraczka/WRFv4.5_nested_bash/scripts/param.sh"
+paramfile=/glade/derecho/scratch/bmraczka/WRFv4.5_kansas/scripts/param.sh
 
 echo "Sourcing parameter file: $paramfile"
-source "$paramfile"
+source $paramfile
 
-DART_ADVANCE_TIME="${DART_DIR}/models/wrf/work/advance_time"
+DART_ADVANCE_TIME=${DART_DIR}/models/wrf/work/advance_time
 
 #################################################################################
 # Immediately check for THM diagnostic setting, and terrain following coordinates
 #################################################################################
 
-cd "$ICBC_DIR"
-$COPY "${TEMPLATE_DIR}/namelist.input.meso"  namelist.wps.check
+cd $ICBC_DIR
+$COPY ${TEMPLATE_DIR}/namelist.input.meso  namelist.wps.check
 hybrid_opt=$(grep "hybrid_opt" namelist.wps.check | cut -d= -f2 | xargs)
 use_theta_m=$(grep "use_theta_m" namelist.wps.check | cut -d= -f2 | xargs)
 $REMOVE namelist.wps.check
@@ -79,19 +79,19 @@ fi
 
 $REMOVE geo_*.nc namelist.wps namelist.input geogrid_done
 mkdir -p geogrid
-$LINK "${WPS_SRC_DIR}/geogrid/GEOGRID.TBL" "${ICBC_DIR}/geogrid/GEOGRID.TBL"
+$LINK ${WPS_SRC_DIR}/geogrid/GEOGRID.TBL ${ICBC_DIR}/geogrid/GEOGRID.TBL
 
-mkdir -p "${ICBC_DIR}/metgrid"
-$LINK "${WPS_SRC_DIR}/metgrid/METGRID.TBL" "${ICBC_DIR}/metgrid/METGRID.TBL"
+mkdir -p ${ICBC_DIR}/metgrid
+$LINK ${WPS_SRC_DIR}/metgrid/METGRID.TBL ${ICBC_DIR}/metgrid/METGRID.TBL
 
 ###############################################################################
 # Helper: run real.exe via PBS job that calls your real.sh
 ###############################################################################
 
 run_real_via_pbs() {
-    local pbs_script="$ICBC_DIR/run_real.pbs"
+    local pbs_script=$ICBC_DIR/run_real.pbs
 
-    cat > "$pbs_script" << EOF
+    cat > $pbs_script << EOF
 #!/bin/bash
 #PBS -N run_real
 #PBS -A ${COMPUTER_CHARGE_ACCOUNT}
@@ -104,22 +104,22 @@ run_real_via_pbs() {
 #PBS -l select=1:ncpus=4:mpiprocs=4
 #PBS -V
 
-cd "$ICBC_DIR"
-"${SHELL_SCRIPTS_DIR}/real.sh" "$paramfile"
+cd $ICBC_DIR
+${SHELL_SCRIPTS_DIR}/real.sh $paramfile
 EOF
 
-    jobid=$(qsub "$pbs_script")
+    jobid=$(qsub $pbs_script)
     echo "Submitted real.exe PBS job: $jobid"
- 
+
     # Wait for the marker file from real.sh
-    while [[ ! -e "$ICBC_DIR/real_done" ]]; do
+    while [[ ! -e $ICBC_DIR/real_done ]]; do
         sleep 15
     done
-    rm -f "$ICBC_DIR/real_done"
+    rm -f $ICBC_DIR/real_done
 
     # Accumulate log
-    if [[ -e "$ICBC_DIR/rsl.out.0000" ]]; then
-        cat "$ICBC_DIR/rsl.out.0000" >> "$ICBC_DIR/out.real.exe"
+    if [[ -e $ICBC_DIR/rsl.out.0000 ]]; then
+        cat $ICBC_DIR/rsl.out.0000 >> $ICBC_DIR/out.real.exe
     fi
 }
 
@@ -132,19 +132,19 @@ while :; do
     echo "Entering gen_retro_icbc.sh for datea = $datea"
 
     # Ensure output directory exists for this cycle
-    mkdir -p "${OUTPUT_DIR}/${datea}"
+    mkdir -p ${OUTPUT_DIR}/${datea}
 
-    cd "$ICBC_DIR"
+    cd $ICBC_DIR
 
     # Link DART input.nml
-    $LINK "${RUN_DIR}/input.nml" input.nml
+    $LINK ${RUN_DIR}/input.nml input.nml
 
     # Clean old GRIB files
     $REMOVE gfs*pgrb2* *grib2 || true
 
     # Compute WPS start and end dates
-    start_date=$(echo "$datea 0 -w" | "$DART_ADVANCE_TIME")
-    end_date=$(echo "$datea 6 -w" | "$DART_ADVANCE_TIME")
+    start_date=$(echo "$datea 0 -w" | $DART_ADVANCE_TIME)
+    end_date=$(echo "$datea 6 -w" | $DART_ADVANCE_TIME)
     echo "start_date = $start_date"
     echo "end_date   = $end_date"
 
@@ -162,41 +162,41 @@ EOF
     fi
 
     # GRIB file names (GFS 0.25)
-    gribfile_a="${GRIB_DATA_DIR}/gfs.0p25.${datea}.f000.grib2"
-    gribfile_b="${GRIB_DATA_DIR}/gfs.0p25.${datea}.f006.grib2"
+    gribfile_a=${GRIB_DATA_DIR}/gfs.0p25.${datea}.f000.grib2
+    gribfile_b=${GRIB_DATA_DIR}/gfs.0p25.${datea}.f006.grib2
 
-    if [[ ! -r "$gribfile_a" || ! -r "$gribfile_b" ]]; then
+    if [[ ! -r $gribfile_a || ! -r $gribfile_b ]]; then
         echo "ERROR: GRIB input files not found:"
         echo "  $gribfile_a"
         echo "  $gribfile_b"
         exit 2
     fi
 
-    $LINK "$gribfile_a" GRIBFILE.AAA
-    $LINK "$gribfile_b" GRIBFILE.AAB
+    $LINK $gribfile_a GRIBFILE.AAA
+    $LINK $gribfile_b GRIBFILE.AAB
 
-    sed -f script.sed "${TEMPLATE_DIR}/namelist.wps.template" > namelist.wps
-    $LINK "${WPS_SRC_DIR}/ungrib/Variable_Tables/Vtable.${GRIB_SRC}" Vtable
+    sed -f script.sed ${TEMPLATE_DIR}/namelist.wps.template > namelist.wps
+    $LINK ${WPS_SRC_DIR}/ungrib/Variable_Tables/Vtable.${GRIB_SRC} Vtable
 
     # Run geogrid once
-    if [[ ! -e "${ICBC_DIR}/geogrid_done" ]]; then
+    if [[ ! -e ${ICBC_DIR}/geogrid_done ]]; then
         echo "Executing geogrid.exe"
-        "${WPS_SRC_DIR}/geogrid.exe" >& output.geogrid.exe
-        touch "${ICBC_DIR}/geogrid_done"
+        ${WPS_SRC_DIR}/geogrid.exe >& output.geogrid.exe
+        touch ${ICBC_DIR}/geogrid_done
     fi
 
     echo "Executing ungrib.exe"
     $REMOVE output.ungrib.exe."${GRIB_SRC}" || true
-    "${WPS_SRC_DIR}/ungrib.exe" >& output.ungrib.exe."${GRIB_SRC}"
+    ${WPS_SRC_DIR}/ungrib.exe >& output.ungrib.exe."${GRIB_SRC}"
 
     echo "Executing metgrid.exe"
     $REMOVE output.metgrid.exe || true
-    "${WPS_SRC_DIR}/metgrid.exe" >& output.metgrid.exe
+    ${WPS_SRC_DIR}/metgrid.exe >& output.metgrid.exe
 
     # Compute end of assimilation window
-    datef=$(echo "$datea $ASSIM_INT_HOURS" | "$DART_ADVANCE_TIME")
+    datef=$(echo "$datea $ASSIM_INT_HOURS" | $DART_ADVANCE_TIME)
     # Gregorian version for wrfbdy naming
-    read -r gdayf gsecf _ < <(echo "$datef 0 -g" | "$DART_ADVANCE_TIME")
+    read -r gdayf gsecf _ < <(echo "$datef 0 -g" | $DART_ADVANCE_TIME)
     hh=${datea:8:2}
 
     ###########################################################################
@@ -209,12 +209,12 @@ EOF
         echo
 
         if [[ "$n" -eq 1 ]]; then
-            date1="$datea"
-            date2="$datef"
-            fcst_hours="$ASSIM_INT_HOURS"
+            date1=$datea
+            date2=$datef
+            fcst_hours=$ASSIM_INT_HOURS
         else
-            date1="$datef"
-            date2="$datef"
+            date1=$datef
+            date2=$datef
             fcst_hours=0
         fi
 
@@ -262,7 +262,7 @@ EOF
     end_second                 = 00, 00,
 EOF
 
-        sed -f script.sed "${TEMPLATE_DIR}/namelist.input.meso" > namelist.input
+        sed -f script.sed ${TEMPLATE_DIR}/namelist.input.meso > namelist.input
 
         # Clean flags & logs
         $REMOVE real_done rsl.* script.sed || true
@@ -272,19 +272,19 @@ EOF
         run_real_via_pbs
 
         # On return, move wrfinput/wrfbdy to appropriate locations
-        read -r gday gsec _ < <(echo "$date1 0 -g" | "$DART_ADVANCE_TIME")
+        read -r gday gsec _ < <(echo "$date1 0 -g" | $DART_ADVANCE_TIME)
 
         # Move wrfinput_d01/d02
         if [[ -e wrfinput_d01 ]]; then
-            $MOVE wrfinput_d01 "${OUTPUT_DIR}/${datea}/wrfinput_d01_${gday}_${gsec}_mean"
+            $MOVE wrfinput_d01 ${OUTPUT_DIR}/${datea}/wrfinput_d01_${gday}_${gsec}_mean
         fi
         if [[ -e wrfinput_d02 ]]; then
-            $MOVE wrfinput_d02 "${OUTPUT_DIR}/${datea}/wrfinput_d02_${gday}_${gsec}_mean"
+            $MOVE wrfinput_d02 ${OUTPUT_DIR}/${datea}/wrfinput_d02_${gday}_${gsec}_mean
         fi
 
         # For first real.exe call, also move wrfbdy_d01
         if [[ "$n" -eq 1 && -e wrfbdy_d01 ]]; then
-            $MOVE wrfbdy_d01 "${OUTPUT_DIR}/${datea}/wrfbdy_d01_${gdayf}_${gsecf}_mean"
+            $MOVE wrfbdy_d01 ${OUTPUT_DIR}/${datea}/wrfbdy_d01_${gdayf}_${gsecf}_mean
         fi
 
     done  # end n=1,2
@@ -298,11 +298,10 @@ EOF
     fi
 
     # Advance datea by ASSIM_INT_HOURS
-    datea=$(echo "$datea $ASSIM_INT_HOURS" | "$DART_ADVANCE_TIME" | awk '{print $1}')
+    datea=$(echo "$datea $ASSIM_INT_HOURS" | $DART_ADVANCE_TIME | awk '{print $1}')
     echo "     "
     echo "Starting next time: $datea"
 
 done
 
 exit 0
-

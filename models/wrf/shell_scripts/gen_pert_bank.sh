@@ -7,25 +7,25 @@
 # Script to save a 'perturbation bank' generated from the WRFDA CV3 option
 #
 # provide the following:
-# 	namelist.input
-# 	wrfinput_d01
-# 	ensemble size
-# 	list of perturbed variables
-# 	wrfda executable and be.dat
+#       namelist.input
+#       wrfinput_d01
+#       ensemble size
+#       list of perturbed variables
+#       wrfda executable and be.dat
 
 set -uo pipefail
 
 datea=2024051900   # need to start from a known valid date matching the wrfinput_d01 date
-paramfile="/glade/derecho/scratch/bmraczka/WRFv4.5_nested_bash/scripts/param.sh"
+paramfile=/glade/derecho/scratch/bmraczka/WRFv4.5_kansas/scripts/param.sh
 
 echo "Sourcing parameter file"
-source "$paramfile"
+source $paramfile
 
 # This has all wrf and wrfda executables and support files
-wrfda_dir="${RUN_DIR}/WRF_RUN"    # set this appropriately
-work_dir="${PERTS_DIR}/work"      # set this appropriately
+wrfda_dir=${RUN_DIR}/WRF_RUN    # set this appropriately
+work_dir=${PERTS_DIR}/work      # set this appropriately
 # Put the final eperturbation files here for later use
-save_dir="${PERTS_DIR}/work/boundary_perts"  # set this appropriately
+save_dir=${PERTS_DIR}/work/boundary_perts  # set this appropriately
 
 # These scale variables are not used directly  -- default is to use hard coded values within
 # wrfvar section of namelist.input.3dvar file
@@ -39,27 +39,27 @@ IC_VERT_SCALE=0.8
 
 num_ens=$(($NUM_ENS * 3))
 
-mkdir -p "${save_dir}"
-cd "$work_dir" || exit 1
-cp "${TEMPLATE_DIR}/input.nml.template" input.nml
+mkdir -p ${save_dir}
+cd $work_dir || exit 1
+cp ${TEMPLATE_DIR}/input.nml.template input.nml
 
 # get a wrfdate and parse
-read -r -a gdate < <(echo "$datea 0h -g" | "${DART_DIR}/models/wrf/work/advance_time")
-read -r -a gdatef < <(echo "$datea ${ASSIM_INT_HOURS}h -g" | "${DART_DIR}/models/wrf/work/advance_time")
-wdate=$(echo "$datea 0h -w" | "${DART_DIR}/models/wrf/work/advance_time")
+read -r -a gdate < <(echo "$datea 0h -g" | ${DART_DIR}/models/wrf/work/advance_time)
+read -r -a gdatef < <(echo "$datea ${ASSIM_INT_HOURS}h -g" | ${DART_DIR}/models/wrf/work/advance_time)
+wdate=$(echo "$datea 0h -w" | ${DART_DIR}/models/wrf/work/advance_time)
 
-yyyy="${datea:0:4}"
-mm="${datea:4:2}"
-dd="${datea:6:2}"
-hh="${datea:8:2}"
+yyyy=${datea:0:4}
+mm=${datea:4:2}
+dd=${datea:6:2}
+hh=${datea:8:2}
 
 for ((n=1; n<=num_ens; n++)); do
 
-    mkdir -p "${work_dir}/mem_${n}"
-    cd "${work_dir}/mem_${n}" || exit 1
-    cp "${wrfda_dir}"/* "${work_dir}/mem_${n}/"
+    mkdir -p ${work_dir}/mem_${n}
+    cd ${work_dir}/mem_${n} || exit 1
+    cp ${wrfda_dir}/* ${work_dir}/mem_${n}/
 
-    ln -sf "${OUTPUT_DIR}/${datea}/wrfinput_d01_${gdate[0]}_${gdate[1]}_mean" "${work_dir}/mem_${n}/fg"
+    ln -sf ${OUTPUT_DIR}/${datea}/wrfinput_d01_${gdate[0]}_${gdate[1]}_mean ${work_dir}/mem_${n}/fg
 
     seed_array2=$((n*10))
 
@@ -108,10 +108,10 @@ EOF
    # namelist.input.3dvar must be set for single parent domain to work with gen_pert_bank.sh, 
    # contains all namelist options wrfvar1-14
 
-   sed -f script.sed "${TEMPLATE_DIR}/namelist.input.3dvar" > "${work_dir}/mem_${n}/namelist.input"
+   sed -f script.sed ${TEMPLATE_DIR}/namelist.input.3dvar > ${work_dir}/mem_${n}/namelist.input
 
     # Create PBS script
-    cat > "${work_dir}/mem_${n}/gen_pert_${n}.sh" << EOF
+    cat > ${work_dir}/mem_${n}/gen_pert_${n}.sh << EOF
 #!/bin/sh
 #=================================================================
 #PBS -N gen_pert_bank_mem${n}
@@ -125,7 +125,7 @@ EOF
 #PBS -k eod
 #=================================================================
 
-cd "${work_dir}/mem_${n}" || exit 3
+cd ${work_dir}/mem_${n} || exit 3
 
 mpiexec -n 4 -ppn 4 ./da_wrfvar.exe >& output.wrfvar
 mv wrfvar_output wrfinput_d01
@@ -133,13 +133,12 @@ mv wrfvar_output wrfinput_d01
 # Extract only the fields that are updated by wrfvar, then diff to generate the pert file for this member
 ncks -h -F -A -a -v U,V,THM,QVAPOR,MU fg orig_data.nc
 ncks -h -F -A -a -v U,V,THM,QVAPOR,MU wrfinput_d01 pert_data.nc
-ncdiff pert_data.nc orig_data.nc "pert_bank_mem_${n}.nc"
-mv "pert_bank_mem_${n}.nc" "${save_dir}/pert_bank_mem_${n}.nc"
+ncdiff pert_data.nc orig_data.nc pert_bank_mem_${n}.nc
+mv pert_bank_mem_${n}.nc ${save_dir}/pert_bank_mem_${n}.nc
 EOF
 
-    qsub "${work_dir}/mem_${n}/gen_pert_${n}.sh"
+    qsub ${work_dir}/mem_${n}/gen_pert_${n}.sh
 
 done
 
 exit 0
-

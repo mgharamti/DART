@@ -10,8 +10,8 @@
 # -----------------------------------------------------------
 # Environment setup (example for NCAR Derecho)
 # -----------------------------------------------------------
-module load nco          
-module load ncl/6.6.2    
+module load nco
+module load ncl/6.6.2
 set -uo pipefail
 # -----------------------------------------------------------
 # Assimilation parameters
@@ -22,38 +22,38 @@ ASSIM_INT_HOURS=6      # ignored if ASSIM_INT_MINUTES > 0
 IC_PERT_SCALE=0.25
 # Set to 1 to enable adaptive inflation
 # For pure forecast mode turn off adaptive inflation (set = 0)
-ADAPTIVE_INFLATION=1   
-NUM_DOMAINS=2          
+ADAPTIVE_INFLATION=1
+NUM_DOMAINS=2
 # -----------------------------------------------------------
 # Directory structure
 # IMPORTANT: scripts rely on these relative names
 # -----------------------------------------------------------
-BASE_DIR=/glade/derecho/scratch/bmraczka/WRFv4.5_kansas   
-RUN_DIR="${BASE_DIR}/rundir"
-TEMPLATE_DIR="${BASE_DIR}/template"
-OBSPROC_DIR="${BASE_DIR}/obsproc"
-OUTPUT_DIR="${BASE_DIR}/output"
-ICBC_DIR="${BASE_DIR}/icbc"
-POST_STAGE_DIR="${BASE_DIR}/post"
-OBS_DIAG_DIR="${BASE_DIR}/obs_diag"
-PERTS_DIR="${BASE_DIR}/perts"
+BASE_DIR=/glade/derecho/scratch/bmraczka/WRFv4.5_kansas
+RUN_DIR=${BASE_DIR}/rundir
+TEMPLATE_DIR=${BASE_DIR}/template
+OBSPROC_DIR=${BASE_DIR}/obsproc
+OUTPUT_DIR=${BASE_DIR}/output
+ICBC_DIR=${BASE_DIR}/icbc
+POST_STAGE_DIR=${BASE_DIR}/post
+OBS_DIAG_DIR=${BASE_DIR}/obs_diag
+PERTS_DIR=${BASE_DIR}/perts
 # -----------------------------------------------------------
 # Component paths
 # -----------------------------------------------------------
-SHELL_SCRIPTS_DIR="${BASE_DIR}/scripts"
-DART_DIR=/glade/work/bmraczka/DART                                
-WRF_DM_SRC_DIR=/glade/work/bmraczka/WRF/WRFv4.5_git               
-WPS_SRC_DIR=/glade/work/bmraczka/WRF/WPSv4.5_git                  
-VAR_SRC_DIR=/glade/work/bmraczka/WRF/WRFDAv4.5_git               
+SHELL_SCRIPTS_DIR=${BASE_DIR}/scripts
+DART_DIR=/glade/work/bmraczka/DART
+WRF_DM_SRC_DIR=/glade/work/bmraczka/WRF/WRFv4.5_git
+WPS_SRC_DIR=/glade/work/bmraczka/WRF/WPSv4.5_git
+VAR_SRC_DIR=/glade/work/bmraczka/WRF/WRFDAv4.5_git
 if [[ ${NUM_DOMAINS} -gt 1 ]]; then
    echo 
-   DART_DOM_DIR="${DART_DIR}/models/wrf/tutorial/template_nest"
+   DART_DOM_DIR=${DART_DIR}/models/wrf/tutorial/template_nest
    echo "NUM_DOMAINS = ${NUM_DOMAINS}" 
    echo "Assigning input.nml.template for multiple WRF domains"
    echo
 else
    echo
-   DART_DOM_DIR="${DART_DIR}/models/wrf/tutorial/template"
+   DART_DOM_DIR=${DART_DIR}/models/wrf/tutorial/template
    echo "NUM_DOMAINS = ${NUM_DOMAINS}" 
    echo "Assigning input.nml.template for single WRF domain"
 fi
@@ -61,8 +61,8 @@ fi
 # -----------------------------------------------------------
 # Template / IC file sources
 # -----------------------------------------------------------
-GEO_FILES_DIR=/glade/u/home/wrfhelp/WPS_GEOG                      
-GRIB_DATA_DIR="${ICBC_DIR}/grib_data"                             
+GEO_FILES_DIR=/glade/u/home/wrfhelp/WPS_GEOG
+GRIB_DATA_DIR=${ICBC_DIR}/grib_data
 GRIB_SRC='GFS'
 
 # -----------------------------------------------------------
@@ -93,8 +93,8 @@ increment_vars_b=( U V PH THM MU QVAPOR QCLOUD QRAIN QICE QSNOW QGRAUP QNICE QNR
 # Queueing / HPC system settings
 # -----------------------------------------------------------
 SUPER_PLATFORM="derecho"
-COMPUTER_CHARGE_ACCOUNT=P86850054     
-EMAIL="bmraczka@ucar.edu"            
+COMPUTER_CHARGE_ACCOUNT=PXXXXXXXX
+EMAIL=bmraczka@ucar.edu
 
 if [[ "$SUPER_PLATFORM" == "derecho" ]]; then
 
@@ -135,8 +135,7 @@ export REMOVE='rm -rf'
 export COPY='cp -Lpfr'
 export MOVE='mv -f'
 export LINK='ln -fs'
-export WGET='/usr/bin/wget'
+export WGET=/usr/bin/wget
 export LIST='ls'
 
 return
-

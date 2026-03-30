@@ -188,9 +188,6 @@ if [[ $ADAPTIVE_INFLATION == 1 ]]; then
    # Create the home for inflation and future state space diagnostic files
    mkdir -p $RUN_DIR/Inflation_input $RUN_DIR/Output
 
-   echo "Within prepare_files_for_da function"
-   echo "Linking inflation files from $OUTPUT_DIR/$datep/Inflation_input to $RUN_DIR"
-
    for inf_file in $OUTPUT_DIR/$datep/Inflation_input/*.nc ; do
        $LINK $inf_file $RUN_DIR 
    done  

@@ -9,24 +9,24 @@
 
 set -uo pipefail
 
-datea="$1"
-paramfile="$2"
+datea=$1
+paramfile=$2
 
 # shellcheck disable=SC1090
-source "$paramfile"
+source $paramfile
 
-start_time="$(date +%s)"
+start_time=$(date +%s)
 echo "host is $(hostname)"
 
-cd "${RUN_DIR}"
-echo "${start_time}" > "${RUN_DIR}/filter_started"
+cd ${RUN_DIR}
+echo ${start_time} > ${RUN_DIR}/filter_started
 
 # Make sure the previous results are not hanging around
-if [[ -e "${RUN_DIR}/obs_seq.final" ]]; then
-  ${REMOVE} "${RUN_DIR}/obs_seq.final"
+if [[ -e ${RUN_DIR}/obs_seq.final ]]; then
+  ${REMOVE} ${RUN_DIR}/obs_seq.final
 fi
-if [[ -e "${RUN_DIR}/filter_done" ]]; then
-  ${REMOVE} "${RUN_DIR}/filter_done"
+if [[ -e ${RUN_DIR}/filter_done ]]; then
+  ${REMOVE} ${RUN_DIR}/filter_done
 fi
 
 #  run data assimilation system
@@ -47,13 +47,12 @@ elif [[ "${SUPER_PLATFORM}" == "derecho" ]]; then
 
 fi
 
-if [[ -e "${RUN_DIR}/obs_seq.final" ]]; then
-  touch "${RUN_DIR}/filter_done"
+if [[ -e ${RUN_DIR}/obs_seq.final ]]; then
+  touch ${RUN_DIR}/filter_done
 fi
 
-end_time="$(date +%s)"
+end_time=$(date +%s)
 length_time=$(( end_time - start_time ))
 echo "duration = $length_time"
 
 exit 0
-

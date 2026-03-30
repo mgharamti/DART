@@ -16,49 +16,49 @@ set -uo pipefail
 datea="${1:?usage: diagnostics_obs.sh YYYYMMDDHH paramfile}"
 paramfile="${2:?usage: diagnostics_obs.sh YYYYMMDDHH paramfile}"
 
-source "${paramfile}"
+source $paramfile
 
-cd "${OBS_DIAG_DIR}"
-${COPY} "${RUN_DIR}/input.nml" input.nml
+cd $OBS_DIAG_DIR
+${COPY} ${RUN_DIR}/input.nml input.nml
 
-read -r -a gdate < <(echo "${datea} 0 -g" | "${DART_DIR}/models/wrf/work/advance_time")
-yyyy2="${datea:0:4}"
-mm2="${datea:4:2}"
-dd2="${datea:6:2}"
-hh2="${datea:8:2}"
+read -r -a gdate < <(echo "${datea} 0 -g" | ${DART_DIR}/models/wrf/work/advance_time)
+yyyy2=${datea:0:4}
+mm2=${datea:4:2}
+dd2=${datea:6:2}
+hh2=${datea:8:2}
 
 #  Determine appropriate dates for observation diagnostics
-datef="$(echo "${datea} -${ASSIM_INT_HOURS}" | "${DART_DIR}/models/wrf/work/advance_time")"
+datef=$(echo "${datea} -${ASSIM_INT_HOURS}" | ${DART_DIR}/models/wrf/work/advance_time)
 #  Forcing the obs_diag_output.nc diagnostic to be the last analysis time only (not cumulative)
-yyyy1="${datea:0:4}"
-mm1="${datea:4:2}"
-dd1="${datea:6:2}"
-hh1="${datea:8:2}"
+yyyy1=${datea:0:4}
+mm1=${datea:4:2}
+dd1=${datea:6:2}
+hh1=${datea:8:2}
 
 half_bin=$(( ASSIM_INT_HOURS / 2 ))
-datefbs="$(echo "${datef} -${half_bin}" | "${DART_DIR}/models/wrf/work/advance_time")"
-fbs_yyyy1="${datefbs:0:4}"
-fbs_mm1="${datefbs:4:2}"
-fbs_dd1="${datefbs:6:2}"
-fbs_hh1="${datefbs:8:2}"
+datefbs=$(echo "${datef} -${half_bin}" | ${DART_DIR}/models/wrf/work/advance_time)
+fbs_yyyy1=${datefbs:0:4}
+fbs_mm1=${datefbs:4:2}
+fbs_dd1=${datefbs:6:2}
+fbs_hh1=${datefbs:8:2}
 
-datefbe="$(echo "${datef} ${half_bin}" | "${DART_DIR}/models/wrf/work/advance_time")"
-fbe_yyyy1="${datefbe:0:4}"
-fbe_mm1="${datefbe:4:2}"
-fbe_dd1="${datefbe:6:2}"
-fbe_hh1="${datefbe:8:2}"
+datefbe=$(echo "${datef} ${half_bin}" | ${DART_DIR}/models/wrf/work/advance_time)
+fbe_yyyy1=${datefbe:0:4}
+fbe_mm1=${datefbe:4:2}
+fbe_dd1=${datefbe:6:2}
+fbe_hh1=${datefbe:8:2}
 
-datelbe="$(echo "${datea} ${half_bin}" | "${DART_DIR}/models/wrf/work/advance_time")"
-lbe_yyyy1="${datelbe:0:4}"
-lbe_mm1="${datelbe:4:2}"
-lbe_dd1="${datelbe:6:2}"
-lbe_hh1="${datelbe:8:2}"
+datelbe=$(echo "${datea} ${half_bin}" | ${DART_DIR}/models/wrf/work/advance_time)
+lbe_yyyy1=${datelbe:0:4}
+lbe_mm1=${datelbe:4:2}
+lbe_dd1=${datelbe:6:2}
+lbe_hh1=${datelbe:8:2}
 
 while [[ "${datef}" -le "${datea}" ]]; do
-  if [[ -e "${OUTPUT_DIR}/${datef}/obs_seq.final" ]]; then
-    ${LINK} "${OUTPUT_DIR}/${datef}/obs_seq.final" "obs_seq.final_${datef}"
+  if [[ -e ${OUTPUT_DIR}/${datef}/obs_seq.final ]]; then
+    ${LINK} ${OUTPUT_DIR}/${datef}/obs_seq.final obs_seq.final_${datef}
   fi
-  datef="$(echo "${datef} ${ASSIM_INT_HOURS}" | "${DART_DIR}/models/wrf/work/advance_time")"
+  datef=$(echo "${datef} ${ASSIM_INT_HOURS}" | ${DART_DIR}/models/wrf/work/advance_time)
 done
 
 # Create flist (absolute paths)
@@ -99,40 +99,39 @@ cat > script.sed <<EOF
   last_bin_end       = ${lbe_yyyy1}, ${lbe_mm1}, ${lbe_dd1}, ${lbe_hh1}, 0, 0,
 EOF
 
-sed -f script.sed "${RUN_DIR}/input.nml" > input.nml
+sed -f script.sed ${RUN_DIR}/input.nml > input.nml
 
 # Create the state-space diagnostic summary
-"${DART_DIR}/models/wrf/work/obs_diag"
-${MOVE} obs_diag_output.nc "${OUTPUT_DIR}/${datea}/."
-${MOVE} "$(ls -1 observation_locations.*.dat | tail -1)" "${OUTPUT_DIR}/${datea}/observation_locations.dat"
+${DART_DIR}/models/wrf/work/obs_diag
+${MOVE} obs_diag_output.nc ${OUTPUT_DIR}/${datea}/.
+${MOVE} $(ls -1 observation_locations.*.dat | tail -1) ${OUTPUT_DIR}/${datea}/observation_locations.dat
 
 # Create a netCDF file with the original observation data (may not have some of the unusual metadata)
-"${DART_DIR}/models/wrf/work/obs_seq_to_netcdf"
-${MOVE} obs_epoch* "${OUTPUT_DIR}/${datea}/"
+${DART_DIR}/models/wrf/work/obs_seq_to_netcdf
+${MOVE} obs_epoch* ${OUTPUT_DIR}/${datea}/
 ${REMOVE} ./*.txt obs_seq.final_* flist observation_locations.*.dat
 
 # Prune the obs_seq.final and store result  keeps first 5 copies? why not set num_output_obs = 0
 # is it the time subsetting that is of interest?
-${LINK} "${OUTPUT_DIR}/${datea}/obs_seq.final" .
-"${DART_DIR}/models/wrf/work/obs_sequence_tool"
-${MOVE} obs_seq.final_reduced "${OUTPUT_DIR}/${datea}/."
+${LINK} ${OUTPUT_DIR}/${datea}/obs_seq.final .
+${DART_DIR}/models/wrf/work/obs_sequence_tool
+${MOVE} obs_seq.final_reduced ${OUTPUT_DIR}/${datea}/.
 ${REMOVE} obs_seq.final
 
 # Process the mean analysis increment
-cd "${OUTPUT_DIR}/${datea}"
-${COPY} "${SHELL_SCRIPTS_DIR}/mean_increment.ncl" .
+cd ${OUTPUT_DIR}/${datea}
+${COPY} ${SHELL_SCRIPTS_DIR}/mean_increment.ncl .
 dn=1
 while (( dn <= ${NUM_DOMAINS} )); do
-   dchar="$(echo "${dn} + 100" | bc | cut -b2-3)"
-   analysis_in="analysis_increment_d${dchar}.nc"
-   mean_out="mean_increments_d${dchar}.nc"
+   dchar=$(echo "${dn} + 100" | bc | cut -b2-3)
+   analysis_in=analysis_increment_d${dchar}.nc
+   mean_out=mean_increments_d${dchar}.nc
 
-   ncl "fname=\"${analysis_in}\"" "fout=\"${mean_out}\"" "${OUTPUT_DIR}/${datea}/mean_increment.ncl" > nclrun_d${dchar}.out
+   ncl "fname=\"${analysis_in}\"" "fout=\"${mean_out}\"" ${OUTPUT_DIR}/${datea}/mean_increment.ncl > nclrun_d${dchar}.out
 
    (( dn++ ))
 done # loop through domains
 
-touch "${OUTPUT_DIR}/${datea}/obs_diags_done"
+touch ${OUTPUT_DIR}/${datea}/obs_diags_done
 
 exit 0
-
