@@ -64,8 +64,8 @@ set OBS_VERIF_DAYS      = 7
 
 #  Generic queuing system parameters
 set SUPER_PLATFORM          = derecho
-set COMPUTER_CHARGE_ACCOUNT = P86850054                  # set this appropriately #%%%#
-set EMAIL                   = bmraczka@ucar.edu                 # set this appropriately #%%%#
+set COMPUTER_CHARGE_ACCOUNT = PXXXXXXXX                  # set this appropriately #%%%#
+set EMAIL                   = userid@email                 # set this appropriately #%%%#
 
 if ( $SUPER_PLATFORM == 'derecho') then
    # Derecho values (uses 'PBS' queueing system) 

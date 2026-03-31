@@ -52,6 +52,8 @@ paramfile=/glade/derecho/scratch/bmraczka/WRFv4.5_kansas/scripts/param.sh
 echo "Sourcing parameter file: $paramfile"
 source $paramfile
 
+domains=$NUM_DOMAINS
+
 DART_ADVANCE_TIME=${DART_DIR}/models/wrf/work/advance_time
 
 #################################################################################
@@ -274,13 +276,13 @@ EOF
         # On return, move wrfinput/wrfbdy to appropriate locations
         read -r gday gsec _ < <(echo "$date1 0 -g" | $DART_ADVANCE_TIME)
 
-        # Move wrfinput_d01/d02
-        if [[ -e wrfinput_d01 ]]; then
-            $MOVE wrfinput_d01 ${OUTPUT_DIR}/${datea}/wrfinput_d01_${gday}_${gsec}_mean
-        fi
-        if [[ -e wrfinput_d02 ]]; then
-            $MOVE wrfinput_d02 ${OUTPUT_DIR}/${datea}/wrfinput_d02_${gday}_${gsec}_mean
-        fi
+        # Move wrfinput_d** files
+        dn=1
+        while (( dn <= domains )); do
+           dchar=$(echo "$dn + 100" | bc | cut -b2-3)
+           $MOVE wrfinput_d${dchar} ${OUTPUT_DIR}/${datea}/wrfinput_d${dchar}_${gday}_${gsec}_mean
+	   (( dn++ ))
+        done # loop through domains
 
         # For first real.exe call, also move wrfbdy_d01
         if [[ "$n" -eq 1 && -e wrfbdy_d01 ]]; then

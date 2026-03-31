@@ -216,8 +216,12 @@ EOF
 
       #  move output files to storage
       set gdate = (`echo $date1 0 -g | ${DART_DIR}/models/wrf/work/advance_time`)
-      ${MOVE} wrfinput_d01 ${OUTPUT_DIR}/${datea}/wrfinput_d01_${gdate[1]}_${gdate[2]}_mean
-      ${MOVE} wrfinput_d02 ${OUTPUT_DIR}/${datea}/wrfinput_d02_${gdate[1]}_${gdate[2]}_mean
+      set dn = 1
+      while ( $dn <= $NUM_DOMAINS )
+         set dchar = `echo $dn + 100 | bc | cut -b2-3`
+         ${MOVE} wrfinput_d${dchar} ${OUTPUT_DIR}/${datea}/wrfinput_d${dchar}_${gdate[1]}_${gdate[2]}_mean
+         @ dn++
+      end # loop through domains
       if ( $n == 1 ) ${MOVE} wrfbdy_d01 ${OUTPUT_DIR}/${datea}/wrfbdy_d01_${gdatef[1]}_${gdatef[2]}_mean
 
       @ n++

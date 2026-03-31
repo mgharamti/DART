@@ -79,14 +79,21 @@ while ( $dn <= $domains )
    @ dn++
 end # loop through domains
 
-#  integrate the model forward in time
+# Integrate the model forward in time
 ${RUN_DIR}/new_advance_model.csh ${emember} ${domains} filter_control${icnum} $paramfile
 ${REMOVE} ${RUN_DIR}/filter_control${icnum}
 
-# move the output to the appropriate directory
+# Move the output to the appropriate directory
 mkdir -p ${OUTPUT_DIR}/${datea}/PRIORS
-mv $RUN_DIR/prior_d01.${icnum} ${OUTPUT_DIR}/${datea}/PRIORS/prior_d01.${icnum}
-mv $RUN_DIR/prior_d02.${icnum} ${OUTPUT_DIR}/${datea}/PRIORS/prior_d02.${icnum}
+
+set dn = 1
+while ( $dn <= $domains )
+   set dchar = `echo $dn + 100 | bc | cut -b2-3`
+   mv ${RUN_DIR}/prior_d${dchar}.${icnum} ${OUTPUT_DIR}/${datea}/PRIORS/prior_d${dchar}.${icnum}
+   @ dn++
+end # loop through domains
+
+
 
 set end_time   = `date  +%s`
 @ length_time  = $end_time - $start_time

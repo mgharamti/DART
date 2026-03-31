@@ -33,8 +33,6 @@ cd ${RUN_DIR}
 
 if ( $#argv > 0 ) then
   set datea   = ${1} # starting date
-  setenv restore 1   # set the restore variable
-  echo 'starting a restore'
 else
   echo "please enter a date: yyyymmddhh"
   exit
@@ -43,12 +41,6 @@ endif
 touch $RUN_DIR/cycle_started_${datea}
 
 while ( 1 == 1 )
-
-   if ( ! -d ${OUTPUT_DIR}/${datea} && $restore == 1 ) then        	
-      ${REMOVE} ${RUN_DIR}/ABORT_RETRO
-      echo 'exiting because output directory does not exist and this is a restore'
-      exit
-   endif
 
    set datep  = `echo $datea -${ASSIM_INT_HOURS}   | ${DART_DIR}/models/wrf/work/advance_time`
    set gdate  = `echo $datea 0 -g                  | ${DART_DIR}/models/wrf/work/advance_time`
@@ -639,18 +631,13 @@ while ( 1 == 1 )
       touch $RUN_DIR/cycle_finished_${datea}
       if ( -e cycle_started_${datea} ) rm $RUN_DIR/cycle_started_${datea}
 
-      # If doing a reanalysis, increment the time if not done.  Otherwise, let the script exit
-      if ( $restore == 1 ) then
+      # If reached final data then exit script
          if ( $datea == $datefnl) then
             echo "Reached the final date "
 	    echo "Script exiting normally"
             exit 0
          endif
          set datea  = `echo $datea $ASSIM_INT_HOURS | ${DART_DIR}/models/wrf/work/advance_time`
-      else
-	 echo "Script exiting normally cycle ${datea}"
-         exit 0
-      endif
    end
 
 exit 0
