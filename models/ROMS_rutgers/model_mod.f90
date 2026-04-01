@@ -72,7 +72,8 @@ use        quad_utils_mod, only : quad_interp_handle, set_quad_coords,          
                                   init_quad_interp, finalize_quad_interp,              &
                                   quad_lon_lat_locate, quad_lon_lat_evaluate,          &
                                   GRID_QUAD_FULLY_IRREGULAR, QUAD_LOCATED_LON_EDGES,   &
-                                  QUAD_LOCATED_CELL_CENTERS, QUAD_LOCATED_LAT_EDGES
+                                  QUAD_LOCATED_CELL_CENTERS, QUAD_LOCATED_LAT_EDGES,   &
+                                  GRID_QUAD_IRREG_SPACED_REGULAR
 use          obs_kind_mod, only : QTY_TEMPERATURE, QTY_SALINITY, QTY_DRY_LAND,         &
                                   QTY_U_CURRENT_COMPONENT, QTY_V_CURRENT_COMPONENT,    &
                                   QTY_SEA_SURFACE_HEIGHT, get_index_for_quantity
@@ -159,10 +160,10 @@ integer  :: Nx = -1, Ny = -1, Nz = -1                       ! Nx, Ny and Nz are 
 integer  :: Nu = -1, Nv = -1, Nw = -1                       ! Staggered grid dimensions
 
 ! ROMS related grid variables
-real(r8), allocatable :: ULAT(:,:), ULON(:,:)               ! U-momentum component; lat, lon
-real(r8), allocatable :: VLAT(:,:), VLON(:,:)               ! V-momentum component; lat, lon
-real(r8), allocatable :: TLAT(:,:), TLON(:,:)               ! T, S, zeta;           lat, lon
-logical,  allocatable :: TMSK(:,:), UMSK(:,:), VMSK(:,:)    ! Logical masks for land points 
+real(r8), allocatable :: TLAT(:,:), TLON(:,:)               ! T, S, zeta; lat, lon
+real(r8), allocatable :: T_lat(:), T_lon(:)                 ! lat, lon 1D for rectilinear grid
+real(r8), allocatable :: ulon_1d(:), vlat_1d(:)             ! lat, lon 1D for staggered grid
+logical,  allocatable :: TMSK(:,:)                          ! Logical mask for land points 
 real(r8), allocatable :: h(:,:)                             ! Bathymetry (m) at RHO points
 real(r8), allocatable :: zeta_mean(:,:)                     ! SSH: ensemble average (m)
 real(r8), allocatable :: Cr(:), sr(:)                       ! S-coordinate related stretching curves
@@ -289,16 +290,16 @@ if (myqty /= QTY_SEA_SURFACE_HEIGHT) then
 endif
 
 if (myqty == QTY_U_CURRENT_COMPONENT) then
-   location = set_location(ULON(iloc,jloc), ULAT(iloc,jloc), depth(kloc), VERTISHEIGHT)
+   location = set_location(lon_u(iloc), T_lat(jloc), depth(kloc), VERTISHEIGHT)
 
 elseif (myqty == QTY_V_CURRENT_COMPONENT) then
-   location = set_location(VLON(iloc,jloc), VLAT(iloc,jloc), depth(kloc), VERTISHEIGHT)
+   location = set_location(T_lon(iloc), lat_v(jloc), depth(kloc), VERTISHEIGHT)
 
 elseif (myqty == QTY_SEA_SURFACE_HEIGHT) then
-   location = set_location(TLON(iloc,jloc), TLAT(iloc,jloc), depth(kloc), VERTISSURFACE)
+   location = set_location(T_lon(iloc), T_lat(jloc), depth(kloc), VERTISSURFACE)
 
 else  ! Everything else is assumed to be on the rho points
-   location = set_location(TLON(iloc,jloc), TLAT(iloc,jloc), depth(kloc), VERTISHEIGHT)
+   location = set_location(T_lon(iloc), T_lat(jloc), depth(kloc), VERTISHEIGHT)
 
 endif
 
@@ -338,8 +339,8 @@ real(r8),            intent(out) :: expected_obs(:)
 integer,             intent(out) :: istatus(:)
 
 ! ---- Local
-integer     :: varid, lstatus
-integer     :: qstatus, vstatus 
+integer     :: varid, lstatus, vstatus
+integer     :: qstat(ens_size) 
 integer     :: sshid, salid, i
 integer     :: lon_c(Nc), lat_c(Nc)  ! lon and lat indices of the 4 quad corners
 real(r8)    :: pdbar(ens_size)       ! Depth of input point converted from (m) to (dbars)
@@ -348,6 +349,7 @@ real(r8)    :: expected_S(ens_size)  ! Ensemble of expected values for salinity
 real(r8)    :: lon_lat_vrt(Nd)       ! lon, lat, vert of the point to interpolate
 real(r8)    :: corners(Nc, ens_size) ! State values at the quad corners
 real(r8)    :: SSHcorn(Nc, ens_size) ! SSH values at the quad corners
+real(r8)    :: lon_f, lat_f          ! Interpolation fractions
 integer(i8) :: dartidx               ! Index into the DART state
 logical     :: on_land              
 
@@ -377,7 +379,8 @@ interp = get_interp_handle(qty)
 ! Locate the quad horizontal and get 
 ! the indices of its four corners
 call quad_lon_lat_locate(interp, lon_lat_vrt(1), lon_lat_vrt(2), &
-                         lon_c, lat_c, lstatus) 
+                         lon_c, lat_c, lon_f, lat_f, lstatus)
+
 if (lstatus /= 0) then  
    istatus = QUAD_LOCATE_FAILED
    return 
@@ -387,7 +390,7 @@ if (debug > 0) then
    do i = 1, Nc
       write(*, '(A, i1, A, i4, A, i4, A, f10.6, A, f10.6, A)') &
                'Corner #', i, ': [', lon_c(i), ',', lat_c(i), '] -> [', &
-               TLON(lon_c(i), lat_c(i)),  ',', TLAT(lon_c(i), lat_c(i)), ']'
+               T_lon(lon_c(i)),  ',', T_lat(lat_c(i)), ']'
    enddo
 endif
 
@@ -417,11 +420,10 @@ if (qty == QTY_SEA_SURFACE_HEIGHT) then
    ! want to go back to using the restart files, here we need to query
    ! the number of dimensions for each variable and interpolate along
    ! the proper time level. 
-   call quad_lon_lat_evaluate(interp, lon_lat_vrt(1), lon_lat_vrt(2), &
-                              lon_c, lat_c, ens_size, SSHcorn,        & 
-                              expected_obs, qstatus)
+   call quad_lon_lat_evaluate(interp, lon_f, lat_f, ens_size, SSHcorn, & 
+                              expected_obs, qstat)
    istatus = 0
-   if (qstatus /= 0) istatus = SSH_QUAD_EVAL_FAILED
+   if (sum(qstat) /= 0) istatus = SSH_QUAD_EVAL_FAILED
    return
 endif
 
@@ -436,11 +438,10 @@ if (vstatus /= 0) then
 endif
 
 ! Do the interpolation
-call quad_lon_lat_evaluate(interp, lon_lat_vrt(1), lon_lat_vrt(2), &
-                           lon_c, lat_c, ens_size, corners,        & 
-                           expected_obs, qstatus)
+call quad_lon_lat_evaluate(interp, lon_f, lat_f, ens_size, corners, & 
+                           expected_obs, qstat)
 
-if (qstatus /= 0) then
+if (sum(qstat) /= 0) then
    istatus = QUAD_EVALUATE_FAILED
    return
 endif
@@ -460,11 +461,10 @@ if(qty == QTY_TEMPERATURE) then
   call vert_interp(salid, QTY_SALINITY, ens_size, lon_lat_vrt, &
                    lon_c, lat_c, state_handle, SSHcorn, corners, vstatus)
   
-  call quad_lon_lat_evaluate(interp, lon_lat_vrt(1), lon_lat_vrt(2), &
-                             lon_c, lat_c, ens_size, corners,        &
-                             expected_S, qstatus)
+  call quad_lon_lat_evaluate(interp, lon_f, lat_f, ens_size, corners, &
+                             expected_S, qstat)
 
-  if (qstatus /= 0) then
+  if (sum(qstat) /= 0) then
      istatus = QUAD_EVALUATE_FAILED
      return
   endif
@@ -733,10 +733,9 @@ character(len=*), parameter :: routine = 'get_grid'
 
 real(r8), allocatable       :: mask(:,:)   ! Land mask: 0 land & 1 water
 
-allocate(ULAT(Nu, Ny), ULON(Nu, Ny), UMSK(Nu, Ny))
-allocate(VLAT(Nx, Nv), VLON(Nx, Nv), VMSK(Nx, Nv))
 allocate(TLAT(Nx, Ny), TLON(Nx, Ny), TMSK(Nx, Ny))
 
+allocate(T_lon(Nx), T_lat(Ny))
 allocate(h(Nx,Ny), Cr(Nz), sr(Nz))
 
 ! Read the vertical information 
@@ -756,39 +755,50 @@ endif
 
 ! Read in the land mask
 TMSK = .false.
-UMSK = .false.
-VMSK = .false.
 
 allocate(mask(Nx, Ny))
 call nc_get_variable(ncid, 'mask_rho', mask, routine)
 where(mask < 1.0_r8) TMSK = .true. ! mask is active where land is
 deallocate(mask)
 
-allocate(mask(Nu, Ny))
-call nc_get_variable(ncid, 'mask_u', mask, routine)
-where(mask < 1.0_r8) UMSK = .true.
-deallocate(mask)
-
-allocate(mask(Nx, Nv))
-call nc_get_variable(ncid, 'mask_v', mask, routine)
-where(mask < 1.0_r8) VMSK = .true.
-deallocate(mask)
-
 ! Read the rest of the grid information from the traditional grid file
 call nc_get_variable(ncid, 'lon_rho', TLON, routine)
 call nc_get_variable(ncid, 'lat_rho', TLAT, routine)
-call nc_get_variable(ncid, 'lon_u'  , ULON, routine)
-call nc_get_variable(ncid, 'lat_u'  , ULAT, routine)
-call nc_get_variable(ncid, 'lon_v'  , VLON, routine)
-call nc_get_variable(ncid, 'lat_v'  , VLAT, routine)
 
-where (TLON < 0.0_r8) TLON = TLON + 360.0_r8
-where (ULON < 0.0_r8) ULON = ULON + 360.0_r8
-where (VLON < 0.0_r8) VLON = VLON + 360.0_r8
+T_lon = TLON(:, 1)
+T_lat = TLAT(1, :)
+
+where (T_lon < 0.0_r8) T_lon = T_lon + 360.0_r8
+
+deallocate(TLAT, TLON)
 
 call nc_close_file(ncid, routine)
 
 end subroutine get_grid
+
+
+!---------------------------------
+! Accessor function: U-points lon
+function lon_u(i) result(val)
+
+integer, intent(in) :: i
+real(r8) :: val
+
+val = 0.5_r8 * (T_lon(i) + T_lon(i+1))
+
+end function
+
+
+!---------------------------------
+! Accessor function: V-points lat
+function lat_v(j) result(val)
+
+integer, intent(in) :: j
+real(r8) :: val
+
+val = 0.5_r8 * (T_lat(j) + T_lat(j+1))
+
+end function
 
 
 !-----------------------------------------------------------------------
@@ -1054,32 +1064,48 @@ end function sensible_temp
 
 subroutine setup_interpolation
 
+integer  :: i, j
+
 ! temp
-call init_quad_interp(GRID_QUAD_FULLY_IRREGULAR, Nx, Ny, &
+call init_quad_interp(GRID_QUAD_IRREG_SPACED_REGULAR, Nx, Ny, &
                       QUAD_LOCATED_CELL_CENTERS,         &
                       global         = .false.,          & 
                       spans_lon_zero = .true.,           &
                       pole_wrap      = .true.,           & 
                       interp_handle  = interp_t_grid)
-call set_quad_coords(interp_t_grid, TLON, TLAT, TMSK)
+call set_quad_coords(interp_t_grid, T_lon, T_lat)
 
 ! u-momentum
-call init_quad_interp(GRID_QUAD_FULLY_IRREGULAR, Nu, Ny, &
+call init_quad_interp(GRID_QUAD_IRREG_SPACED_REGULAR, Nu, Ny, &
                       QUAD_LOCATED_LON_EDGES,            &    
                       global         = .false.,          &    
                       spans_lon_zero = .true.,           &    
                       pole_wrap      = .true.,           &
                       interp_handle  = interp_u_grid)
-call set_quad_coords(interp_u_grid, ULON, ULAT, UMSK)
+
+allocate(ulon_1d(Nu))           
+do i = 1, Nu
+   ulon_1d(i) = lon_u(i)
+enddo
+
+call set_quad_coords(interp_u_grid, ulon_1d, T_lat)
+deallocate(ulon_1d)
 
 ! v-momentum
-call init_quad_interp(GRID_QUAD_FULLY_IRREGULAR, Nx, Nv, &
+call init_quad_interp(GRID_QUAD_IRREG_SPACED_REGULAR, Nx, Nv, &
                       QUAD_LOCATED_LAT_EDGES,            &    
                       global         = .false.,          &    
                       spans_lon_zero = .true.,           &    
                       pole_wrap      = .true.,           &
                       interp_handle  = interp_v_grid)
-call set_quad_coords(interp_v_grid, VLON, VLAT, VMSK)
+
+allocate(vlat_1d(Nv))
+do j = 1, Nv
+   vlat_1d(j) = lat_v(j)
+enddo
+
+call set_quad_coords(interp_v_grid, T_lon, vlat_1d)
+deallocate(vlat_1d)
 
 end subroutine setup_interpolation
 
@@ -1146,6 +1172,26 @@ if (qty == QTY_U_CURRENT_COMPONENT .or. &
 end function on_t_grid
 
 
+!-----------------------------------------------------
+! Helper functions to get U/V masks  
+
+logical function u_point_on_land(i, j)
+
+integer, intent(in) :: i, j
+
+u_point_on_land = TMSK(i, j) .or. TMSK(i+1, j)
+
+end function u_point_on_land
+
+logical function v_point_on_land(i, j)
+
+integer, intent(in) :: i, j
+
+v_point_on_land = TMSK(i, j) .or. TMSK(i, j+1)
+
+end function v_point_on_land
+
+
 !-----------------------------------------------------------
 ! Figure out whether a point is on land or not
 
@@ -1155,9 +1201,9 @@ integer :: qty, ilon, ilat
 logical :: point_on_land
 
 if (on_u_grid(qty)) then 
-   point_on_land = UMSK(ilon, ilat) 
+   point_on_land = u_point_on_land(ilon, ilat) 
 elseif (on_v_grid(qty)) then 
-   point_on_land = VMSK(ilon, ilat) 
+   point_on_land = v_point_on_land(ilon, ilat) 
 else
    point_on_land = TMSK(ilon, ilat) 
 endif
@@ -1175,16 +1221,18 @@ logical, intent(out) :: lstatus
 
 lstatus = .false.
 
-if (on_u_grid(qty)) then 
-   lstatus = UMSK(lons(1), lats(1)) .or. &
-             UMSK(lons(2), lats(2)) .or. &
-             UMSK(lons(3), lats(3)) .or. &
-             UMSK(lons(4), lats(4))
-elseif (on_v_grid(qty)) then 
-   lstatus = VMSK(lons(1), lats(1)) .or. &
-             VMSK(lons(2), lats(2)) .or. &
-             VMSK(lons(3), lats(3)) .or. &
-             VMSK(lons(4), lats(4))
+if (on_u_grid(qty)) then
+   lstatus = u_point_on_land(lons(1), lats(1)) .or. &
+             u_point_on_land(lons(2), lats(2)) .or. &
+             u_point_on_land(lons(3), lats(3)) .or. &
+             u_point_on_land(lons(4), lats(4))
+
+elseif (on_v_grid(qty)) then
+   lstatus = v_point_on_land(lons(1), lats(1)) .or. &
+             v_point_on_land(lons(2), lats(2)) .or. &
+             v_point_on_land(lons(3), lats(3)) .or. &
+             v_point_on_land(lons(4), lats(4))
+ 
 else 
    lstatus = TMSK(lons(1), lats(1)) .or. &
              TMSK(lons(2), lats(2)) .or. &
@@ -1306,10 +1354,8 @@ end subroutine unique_levels
 
 subroutine end_model()
 
-deallocate(ULAT, ULON, UMSK)
-deallocate(VLAT, VLON, VMSK)
-deallocate(TLAT, TLON, TMSK)
-deallocate(h, Cr, sr)  
+deallocate(TMSK, h, Cr, sr)  
+deallocate(T_lon, T_lat)
 
 if (allocated(zeta_mean)) deallocate(zeta_mean)
 
