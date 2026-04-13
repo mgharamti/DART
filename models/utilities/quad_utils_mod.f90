@@ -50,10 +50,10 @@ use        types_mod, only : r8, i8, MISSING_R8, PI, deg2rad
 
 use     location_mod, only : location_type, get_location
 
-use    utilities_mod, only : register_module, error_handler,         &
-                             E_ERR, E_WARN, E_MSG, nmlfileunit,      &
-                             do_output, do_nml_file, do_nml_term,    &
-                             find_namelist_in_file, check_namelist_read, &
+use    utilities_mod, only : register_module, error_handler,              &
+                             E_ERR, E_WARN, E_MSG, E_ALLMSG, nmlfileunit, &
+                             do_output, do_nml_file, do_nml_term,         &
+                             find_namelist_in_file, check_namelist_read,  &
                              log_it, array_dump
 
 use      options_mod, only : get_missing_ok_status
@@ -2254,7 +2254,7 @@ if (gep_stat /= 0) then
                              'failed. It could be a singularity or a very tiny pivot'
       write(string2, '(2(A, F10.4))') 'Obs location -> lon: ', lon, ', lat: ', lat  
       write(string3, '(2(A, 4F10.4))') 'Quad corners -> x: ', x_corners, ', y: ', y_corners
-      call error_handler(E_MSG, 'quad_bilinear_interp', string1, &
+      call error_handler(E_ALLMSG, 'quad_bilinear_interp', string1, &
                          source, revision, revdate, text2 = string2, text3 = string3)
     endif
 
