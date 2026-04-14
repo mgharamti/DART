@@ -39,7 +39,7 @@ Bug-fix:
 
 Documentation updates:
 
-  - NSF NCAR branding update
+  - WRF tutorial rewritten for nested Kansas 2024 severe storm example
 
 
 
