@@ -13,6 +13,9 @@ Gemfile.lock
 _site/
 .cppdefs
 
+# ROMS_rutgers compile time selection
+chosen_model_mod.f90
+
 # Nuisance files
 
 # Makefile
