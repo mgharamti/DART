@@ -54,9 +54,9 @@ for arg in "$@"; do
 done
 
 if [[ "$grid_type" == "reg_grid" ]]; then
-    cp -f "$DART/models/ROMS_rutgers/model_mod_reg_grid" "$DART/models/ROMS_rutgers/chosen_model_mod.f90"
+    cp -f "$DART/models/ROMS_rutgers/model_mod_reg_grid" "$DART/models/ROMS_rutgers/model_mod.f90"
 elif [[ "$grid_type" == "irreg_grid" ]]; then
-    cp -f "$DART/models/ROMS_rutgers/model_mod_irreg_grid" "$DART/models/ROMS_rutgers/chosen_model_mod.f90"
+    cp -f "$DART/models/ROMS_rutgers/model_mod_irreg_grid" "$DART/models/ROMS_rutgers/model_mod.f90"
 else
     echo "ERROR: grid type required."
     echo "Usage: quickbuild.sh reg_grid|irreg_grid [mpi/nompi/mpif08] [program]"

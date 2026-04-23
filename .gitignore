@@ -14,7 +14,7 @@ _site/
 .cppdefs
 
 # ROMS_rutgers compile time selection
-chosen_model_mod.f90
+models/ROMS_rutgers/model_mod.f90
 
 # Nuisance files
 
