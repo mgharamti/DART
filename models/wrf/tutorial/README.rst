@@ -564,10 +564,9 @@ date within the ``$BASE_DIR/output`` directory.
 
 
 .. note::
-
-Once the script completes, you should confirm the following files
-have been created within the ``$BASE_DIR/output/2024051900``
-directory:
+   Once the script completes, you should confirm the following files
+   have been created within the ``$BASE_DIR/output/2024051900``
+   directory:
 
 ::
 
@@ -607,13 +606,12 @@ application.  For more information please see the WRFDA documentation.
    ./gen_pert_bank.sh
 
 .. note::
-
-The script will generate a batch job for each perturbation (60 total).
-The rule of thumb is to generate 3-4X as many perturbations as the
-model ensemble (20). This is done to increase the probability each
-ensemble member receives a unique perturbation.  You should confirm 
-the following files have been created within the 
-``$PERTS_DIR/work/boundary_perts`` directory:
+   The script will generate a batch job for each perturbation (60 total).
+   The rule of thumb is to generate 3-4X as many perturbations as the
+   model ensemble (20). This is done to increase the probability each
+   ensemble member receives a unique perturbation.  You should confirm 
+   the following files have been created within the 
+   ``$PERTS_DIR/work/boundary_perts`` directory:
 
 ::
 
