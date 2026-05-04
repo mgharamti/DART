@@ -446,7 +446,7 @@ Check to make sure your ``$BASE_DIR/rundir/WRF_RUN`` directory contains:
    be.dat
    contents of your WRF build run/ directory (support data files for WRF)
 
-.. note::
+.. Note::
 
 	
    Be aware that the *setup.sh* script is designed to remove
@@ -563,7 +563,7 @@ date within the ``$BASE_DIR/output`` directory.
    ./gen_retro_icbc.sh
 
 
-.. note::
+.. Note::
    Once the script completes, you should confirm the following files
    have been created within the ``$BASE_DIR/output/2024051900``
    directory:
@@ -605,7 +605,7 @@ application.  For more information please see the WRFDA documentation.
    cd $BASE_DIR/scripts
    ./gen_pert_bank.sh
 
-.. note::
+.. Note::
    The script will generate a batch job for each perturbation (60 total).
    The rule of thumb is to generate 3-4X as many perturbations as the
    model ensemble (20). This is done to increase the probability each
