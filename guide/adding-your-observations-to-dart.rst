@@ -20,8 +20,6 @@ Synthetic observations can be created manually using
 or extracted from a numerical model using perfect_model_obs 
 as described in *Identity observations*, below.
 
-.. `programs provided by DART
-   \<../assimilation_code/programs/create_obs_sequence/create_obs_sequence.rst>`__
 
 Real observations
 -----------------
