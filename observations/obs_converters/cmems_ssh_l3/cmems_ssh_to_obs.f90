@@ -10,15 +10,8 @@
 ! which is the low-pass filtered sea level anomaly, with DAC, ocean tide, 
 ! internal tide, and long-wavelength-error corrections applied. 
 ! This obs should be smoother, less noisy, and closer to the modeled
-! mesoscale signal than its "sla_unfiltered" counterpart.
-
-! The observation error standard deviation is parameterized as function 
-! of depth such that it's small in the deep ocean and large over the shelf/
-! shallow water. This is because in shallow/coastal regions, data tends 
-! to be more contaminated from land, unresolved tides, internal tides, 
-! wetting/drying effects, stronger small-scale variability, and 
-! interpolation mismatch. To this end, the bathymetry is read in from 
-! the model's grid file and used in the obs error function. 
+! mesoscale signal than its "sla_unfiltered" counterpart. 
+! The observation error standard deviation is an input namelist option.
 
 ! SSH data is in meters. 
 
@@ -72,12 +65,6 @@ real(r8), allocatable   :: lon(:), lat(:) ! Location
 real(r8), allocatable   :: val(:)         ! Obs value
 integer,  allocatable   :: vqc(:)         ! Obs QC 
 
-real(r8), allocatable   :: glon(:, :), glat(:, :)  ! Ocean grid 
-real(r8), allocatable   :: bath(:, :), mask(:, :)  ! Bathymetry and land mask
-real(r8), allocatable   :: lon_1d(:) , lat_1d(:)
-
-logical :: roms_fast_lookup
-
 character(len=512), allocatable :: dat(:), par(:)
 
 ! SSH data structure
@@ -98,21 +85,15 @@ type(csv_file_type) :: cf
 !------------------------------------------------------------------------
 !  Declare namelist parameters
 character(len=256) :: file_list         = ''                 ! List of incoming obs csv files
-character(len=256) :: ocean_in          = 'roms_restart.nc'  ! Ocean file for reading bathymetry
 character(len=256) :: file_out          = 'obs_seq.ssh'      ! Resulting obs seq file
 integer            :: avg_obs_per_file  = 500000             ! Average number of obs in file
-real(r8)           :: obs_error_min     = 0.04_r8            ! Obs err sd [m]; minimum for open ocean conditions
-real(r8)           :: obs_error_max     = 0.08_r8            ! Obs err sd [m]; maximum for shallow water
-real(r8)           :: transition_depth  = 500.0_r8           ! Bathymetric transition depth
+real(r8)           :: obs_error_sd      = 0.04_r8            ! Obs err sd [m]; often 3<sigma(cm)<5
 logical            :: debug             = .true.             ! verbose output
 
 
 namelist /cmems_ssh_to_obs_nml/ file_list,        &
-                                ocean_in,         &
                                 file_out,         &
-                                obs_error_min,    &
-                                obs_error_max,    & 
-                                transition_depth, &
+                                obs_error_sd,     &
                                 avg_obs_per_file, &
                                 debug
 
@@ -149,9 +130,6 @@ endif
 call init_obs_sequence(obs_seq, num_copies, num_qc, num_new_obs)
 call set_copy_meta_data(obs_seq, num_copies, 'SSH observation')
 call set_qc_meta_data(obs_seq, num_qc, 'SSH QC')
-
-! Read the ocean grid, mask, and bathymetry
-call read_ocean(ocean_in)
 
 ! Loop over the obs files 
 do filenum = 1, nfiles
@@ -232,7 +210,7 @@ do i = 1, nobs
    sat(k)%lat = lat(i)
    sat(k)%dat = parse_time(dat(i))
    sat(k)%obs = val(i)
-   sat(k)%err = ssh_obs_error(lon(i), lat(i))
+   sat(k)%err = obs_error_sd
    sat(k)%oqc = vqc(i)
 
 enddo
@@ -245,9 +223,10 @@ if (debug) then
    ! print some of the obs to check
    print * 
    do i = 1, min(num_valid_obs, 10)
-      write(string1, '(4X, A, i6, 4(A,f10.4), A)') '* obs #', i, ', lat:'  , sat(i)%lat, &
-                                          ', lon:', sat(i)%lon , ', SSH:'  , sat(i)%obs, &
-                                          ', QC:' , sat(i)%oqc , ', date: '
+      write(string1, '(4X, A, i6, 2(A,f9.4), 2(A, f6.3), A)') '* obs #', i, &
+                               ', lat:' , sat(i)%lat, ', lon:', sat(i)%lon, &
+                               ', SSH:' , sat(i)%obs, ', QC:' , sat(i)%oqc, &
+                               ', date:'
       call print_date(sat(i)%dat, str=string1)
    enddo
 endif
@@ -281,192 +260,6 @@ enddo
 end subroutine fill_obs
 
 
-!---------------------------------------------
-! Use local bathymetry depth and define an obs 
-! error sd that increases as water gets shallower
-! deep ocean          -> smaller SSH error
-! shelf/shallow water -> larger  SSH error
-!
-! sigma = sigma_min + (sigma_max - sigma_min) * exp(-h/h0)
-! where:
-!    - sigma    : error sd
-!    - sigma_min: open ocean minimum error
-!    - sigma_max: shallow-water maximum error
-!    - h        : local bathymetry
-!    - h0       : transition depth scale 
-function ssh_obs_error(lon, lat) result(error)
-
-real(r8), intent(in) :: lon, lat
-real(r8)             :: sigma_min, sigma_max, h0
-real(r8)             :: error, h_obs
-
-sigma_min = obs_error_min
-sigma_max = obs_error_max
-h0        = transition_depth
-
-! Get bathymetry
-h_obs = depth_at_obs(lon, lat)
-
-if (h_obs /= h_obs .or. h_obs <= 0.0_r8) then
-   error = sigma_max
-   return
-endif
-
-error = sigma_min + (sigma_max - sigma_min) * exp(-h_obs / h0)
-
-if (1>2) then 
-   write(*, '(4(A, F13.6))') 'lon:', lon  , ', lat:', lat, & 
-                    ', bathymetry:', h_obs, ', err:', error 
-endif
-
-end function ssh_obs_error
-
-
-!------------------------------------------------------------------
-! Given an obs location, get the nearest estimate of the bathymetry
-function depth_at_obs(lon_obs, lat_obs) result(h_obs)
-
-real(r8), intent(in) :: lon_obs, lat_obs
-
-real(r8) :: h_obs
-
-! Fast lookup for ROMS's regular grid 
-if (roms_fast_lookup) then
-   h_obs = depth_roms_fast(lon_obs, lat_obs)
-else
-   ! Other grids: brute force
-   h_obs = depth_bruteforce(lon_obs, lat_obs)
-endif
-
-end function depth_at_obs
-
-
-!-----------------------------------------------
-! Find depth using a pair of 1D location arrays
-function depth_roms_fast(lon_obs, lat_obs) result(h_obs)
-
-real(r8), intent(in) :: lon_obs, lat_obs
-
-integer  :: i0, j0, i, j, i1, i2, j1, j2
-real(r8) :: dlon, dlat, d2, d2min, h_obs
-
-! find nearest indices in 1D
-i0 = nearest_index_1d(lon_obs, lon_1d)
-j0 = nearest_index_1d(lat_obs, lat_1d)
-
-! local search window (within 2 cells)
-! Idea is that instead of searching the 
-! entire grid, I'll look only in a local
-! neighborhood around the candidate index, i.e., i0, j0
-! My window: A 5x5 patch (25 cells) + Clamp the edges 
-! i0-2 -> i0+2
-! j0-2 -> j0+2
-i1 = max(1, i0-2)
-i2 = min(size(glon,1), i0+2)
-j1 = max(1, j0-2)
-j2 = min(size(glon,2), j0+2)
-
-d2min = huge(1.0_r8)
-h_obs = MISSING_R8
-
-do j = j1, j2
-   do i = i1, i2
-      if (mask(i,j) == 0.0_r8) cycle
-
-      dlon = abs(glon(i,j) - lon_obs)
-      dlon = min(dlon, 360.0_r8 - dlon) ! in case of a wrap-around
-
-      dlat = glat(i,j) - lat_obs
-      d2   = dlon*dlon + dlat*dlat
-
-      ! Compare current distance with the best so far "d2min"
-      ! If smaller, we need to update the min and store the 
-      ! corresponding depth "h_obs"
-      if (d2 == d2 .and. d2 < d2min) then
-         d2min = d2
-         h_obs = bath(i,j)
-      endif
-   enddo
-enddo
-
-end function depth_roms_fast
-
-
-!-----------------------------------------------
-! Scan the entire grid to find approximate depth
-function depth_bruteforce(lon_obs, lat_obs) result(h_obs)
-
-real(r8), intent(in) :: lon_obs, lat_obs
-
-integer  :: i, j
-real(r8) :: dlon, dlat, d2, d2min, h_obs
-
-d2min = huge(1.0_r8)
-h_obs = MISSING_R8
-
-do j = 1, size(glon,2)
-   do i = 1, size(glon,1)
-      if (mask(i,j) == 0.0_r8) cycle
-
-      dlon = abs(glon(i,j) - lon_obs)
-      dlon = min(dlon, 360.0_r8 - dlon)
-
-      dlat = glat(i,j) - lat_obs
-      d2   = dlon*dlon + dlat*dlat
-
-      if (d2 == d2 .and. d2 < d2min) then
-         d2min = d2
-         h_obs = bath(i,j)
-      endif
-   enddo
-enddo
-
-end function depth_bruteforce
-
-
-!----------------------------------------
-! Nearest index in a 1D array to a number
-integer function nearest_index_1d(x, arr) result(idx)
-
-real(r8), intent(in) :: x
-real(r8), intent(in) :: arr(:)
-
-integer  :: k
-real(r8) :: d, dmin
-
-dmin = huge(1.0_r8)
-idx  = 1
-
-do k = 1, size(arr)
-   d = abs(arr(k) - x)
-   if (d < dmin) then
-      dmin = d
-      idx = k
-   endif
-enddo
-
-end function nearest_index_1d
-
-
-!-------------------------------------------
-! Check whether lon/lat arrays are monotonic 
-logical function is_monotonic(arr)
-
-real(r8), intent(in) :: arr(:)
-integer :: k
-
-is_monotonic = .true.
-
-do k = 2, size(arr)
-   if (arr(k) <= arr(k-1)) then
-      is_monotonic = .false.
-      return
-   endif
-enddo
-
-end function is_monotonic
-
-
 !-----------------------------------------
 ! Using the date string, set the DART time
 function parse_time(datestr) result(obs_time)
@@ -491,48 +284,6 @@ obs_time = set_date(year, month, day, hour, minute, second)
 end function parse_time 
 
 
-!--------------------------------------------------
-! Read ocean grid and bathymetry from the relavant 
-! ocean model 
-subroutine read_ocean(file)
-
-character(len=*), parameter :: routine = 'read_ocean'
-
-character(len=*), intent(in) :: file
-integer :: ncid, nx, ny
-
-! open Ocean file 
-ncid = nc_open_file_readonly(file, routine)
-
-! We need to read the bathymetry from the ocean file. 
-! In this case, ROMS is used. The following code can 
-! be adjusted for other ocean configurations. 
-nx = nc_get_dimension_size(ncid, 'xi_rho',  routine)
-ny = nc_get_dimension_size(ncid, 'eta_rho', routine)
-
-allocate(bath(nx, ny), glon(nx, ny), &
-         glat(nx, ny), mask(nx, ny), &
-         lon_1d(nx)  , lat_1d(ny))
-
-call nc_get_variable(ncid, 'h'       , bath, routine)
-call nc_get_variable(ncid, 'mask_rho', mask, routine)
-call nc_get_variable(ncid, 'lon_rho' , glon, routine)
-call nc_get_variable(ncid, 'lat_rho' , glat, routine)
-
-! Only possible because the ROMS grid in this case
-! is regular but not equally spaced. 
-where (glon < 0.0_r8) glon = glon + 360.0_r8
-
-lon_1d = glon(:,1)
-lat_1d = glat(1,:)
-
-roms_fast_lookup = is_monotonic(lon_1d) .and. is_monotonic(lat_1d)
-
-call nc_close_file(ncid, source)  
-
-end subroutine read_ocean
-
-
 !------------------------------------------------------------
 ! All collected obs (if any) are written in the seq file. 
 subroutine finish_obs()
@@ -551,9 +302,6 @@ else
    string1 = 'No obs were converted.'
    call error_handler(E_ERR, source, string1)
 endif
-
-deallocate(glon, glat, bath, mask)
-deallocate(lon_1d, lat_1d)
 
 call error_handler(E_MSG, source, 'Finished successfully.')
 

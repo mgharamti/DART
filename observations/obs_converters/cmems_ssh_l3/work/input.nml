@@ -11,8 +11,8 @@
 
 &cmems_ssh_to_obs_nml
    file_list       = 'obs_files.txt'
-   ocean_in        = '../../../../../dart4roms/models/ROMS_rutgers/work/roms_hist_z.nc'
    file_out        = 'obs_seq.ssh'
+   obs_error_sd    = 0.04
    debug           = .true.
   /
 
