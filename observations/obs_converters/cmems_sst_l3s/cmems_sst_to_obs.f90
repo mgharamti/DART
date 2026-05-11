@@ -42,7 +42,7 @@ implicit none
 character(len=*), parameter :: source = 'cmems_sst_to_obs'
 
 ! Lower bound for obs_error_sd
-real(r8), parameter :: OBS_ERROR_SD_MIN = 0.05_r8  
+real(r8), parameter :: OBS_ERROR_SD_MIN   = 0.05_r8 ! Add this to the namelist? 
 integer, parameter  :: OBS_QC_LOW_QUALITY = 3
 
 ! File variables

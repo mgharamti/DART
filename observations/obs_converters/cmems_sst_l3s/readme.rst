@@ -63,7 +63,6 @@ with default:
    OBS_ERROR_SD_MIN = 0.05 °C
 
 NaN values in the uncertainty field are replaced with this minimum value.
-
 This lower bound represents a practical safeguard against over-weighting
 individual observations and does not replace more sophisticated error
 modeling or inflation during assimilation.
