@@ -471,6 +471,7 @@ References
    models/wrf/WRF_DART_utilities/replace_wrf_fields
    models/wrf/WRF_DART_utilities/wrf_dart_obs_preprocess
    models/utilities/default_model_mod
+   models/utilities/quad_utils_mod
 
 
 .. toctree::
