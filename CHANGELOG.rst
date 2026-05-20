@@ -22,6 +22,21 @@ individual files.
 
 The changes are now listed with the most recent at the top.
 
+**May 15 2026 :: CIRRUS GitHub actions. Tag v11.23.1**
+
+New Repo Infrastructure:
+
+ - CIRRUS NCAR cloud GitHub actions for various compilers
+
+Bug fixes:
+
+ - Build functions fix for DART as a submodule
+ - Outstanding model_mod calls routed through assim_model_mod
+
+Documentation update:
+
+ - Identity observations documentation
+
 **April 29 2026 :: Quad Utilities Enhanced Stability & ROMS Memory Improvements. Tag v11.23.0**
 
  - Improved numerical robustness of quadrilateral interpolation in quad_utils_mod
