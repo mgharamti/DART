@@ -24,7 +24,8 @@ use time_manager_mod,     only : time_type, set_calendar_type, GREGORIAN, get_ti
 use utilities_mod,        only : initialize_utilities, find_namelist_in_file,         &
                                  nmlfileunit, error_handler, do_nml_term, E_ERR,      &
                                  finalize_utilities, do_nml_file, get_next_filename,  &
-                                 find_textfile_dims, file_exist, E_MSG, to_upper
+                                 find_textfile_dims, file_exist, E_MSG, to_upper,     &
+                                 check_namelist_read
 use location_mod,         only : VERTISSURFACE
 use obs_sequence_mod,     only : obs_type, obs_sequence_type, init_obs, get_num_obs,  &
                                  static_init_obs_sequence, init_obs_sequence,         &
@@ -103,6 +104,7 @@ call initialize_utilities()
 ! Read the namelist options
 call find_namelist_in_file('input.nml', 'cmems_ssh_to_obs_nml', iunit)
 read(iunit, nml = cmems_ssh_to_obs_nml, iostat = io)
+call check_namelist_read(iunit, io, 'cmems_ssh_to_obs_nml')
 
 if (do_nml_file()) write(nmlfileunit, nml=cmems_ssh_to_obs_nml)
 if (do_nml_term()) write(     *     , nml=cmems_ssh_to_obs_nml)
@@ -122,9 +124,11 @@ call init_obs(obs, num_copies, num_qc)
 call init_obs(prev_obs, num_copies, num_qc)
 
 if (file_exist(file_out)) then
-   write(*, '(/, A)') 'Output file: '//trim(adjustl(file_out))//' exists. Replacing it ...'
+   string1 = 'Output file: '//trim(adjustl(file_out))//' exists. Replacing it ...'
+   call error_handler(E_MSG, source, string1)
 else
-   write(*, '(/, A)') 'Creating "'//trim(adjustl(file_out))//'" file.'
+   string1 = 'Creating "'//trim(adjustl(file_out))//'" file.'
+   call error_handler(E_MSG, source, string1)
 endif
 
 call init_obs_sequence(obs_seq, num_copies, num_qc, num_new_obs)
