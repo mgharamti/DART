@@ -10,7 +10,7 @@
 
 
 &cmems_ssh_to_obs_nml
-   file_list       = 'obs_files.txt'
+   file_list       = 'ssh_file_lis.txt'
    file_out        = 'obs_seq.ssh'
    obs_error_sd    = 0.04
    debug           = .true.

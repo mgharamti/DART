@@ -21,7 +21,8 @@ The supported product is:
 The converter reads CSV files exported from CMEMS and extracts **filtered sea level
 anomaly (SLA)** observations for assimilation into ocean models such as ROMS.
 
-The resulting observations are assigned the DART kind: ``SATELLITE_SSH``
+The resulting observations are assigned the DART kind: ``SATELLITE_SSH``. The 
+observations in the sequence file are in units of meters. 
 
 Data Description
 ----------------
@@ -35,8 +36,36 @@ comparison with model sea surface height (e.g., ROMS ``zeta``).
 
 Observation Error
 -----------------
-The observation error standard deviation is parameterized as a function of
-**local bathymetry**:
+The converter assigns a uniform observation error standard deviation to all SSH
+observations. The error value is specified by the user through the converter
+namelist and is written to the output ``obs_seq`` file as observation error
+variance.
+
+Optional Post-Processing
+^^^^^^^^^^^^^^^^^^^^^^^^
+Additional filtering and depth-dependent error adjustment can be performed
+after the converter is run using the utility script:
+
+::
+
+   models/ROMS_Rutgers/preprocess_ocean_obs.py
+
+This script is intended for model-specific preprocessing of ocean observations
+prior to assimilation. It can:
+
+- remove observations located in shallow-water regions,
+- apply depth-dependent observation error models,
+- process only selected observation types,
+- preserve all other observation types unchanged.
+
+The script currently uses ROMS bathymetry and land masks from a ROMS restart
+or history file.
+
+For SSH observations, a commonly used workflow is to remove observations in
+water shallower than 200 m and increase the observation error in coastal
+regions where representativeness errors and unresolved processes are larger.
+
+The depth-dependent error model is:
 
 ::
 
@@ -44,39 +73,43 @@ The observation error standard deviation is parameterized as a function of
 
 where:
 
-- ``sigma_min``: minimum error (deep ocean)
-- ``sigma_max``: maximum error (shallow water)
-- ``h``: bathymetry depth (meters)
-- ``h0``: transition depth scale
+- ``sigma_min``: deep-ocean observation error standard deviation,
+- ``sigma_max``: shallow-water observation error standard deviation,
+- ``h``: local bathymetric depth (m),
+- ``h0``: transition depth scale (m).
 
-This formulation reflects increased uncertainty in shallow/coastal regions due to 
-land contamination, unresolved tides (barotropic and internal), wetting/drying 
-effects, stronger small-scale variability, and interpolation mismatch.
-
-If bathymetry cannot be determined or is invalid:
+Example usage:
 
 ::
 
-   sigma = sigma_max
+   python preprocess_ocean_obs.py obs_seq.all obs_seq.trim \
+       --roms-file roms_hist.nc \
+       --obs-type SATELLITE_SSH
 
-Bathymetry
-^^^^^^^^^^
-Bathymetry is read from a model grid file (e.g., ROMS restart or grid file).
-The converter supports two modes: 
+Typical output:
 
-**1. ROMS fast lookup (default)**
+::
 
-- Uses 1D slices of longitude and latitude:
-- Finds nearest indices and searches a small local window (5x5 cells)
+   Reading obs_seq:  obs_seq.all
+   Reading ROMS grid: roms_hist.nc
 
-This approach is efficient and suitable for structured ROMS grids.
+   Obs types in file: ['BOTTLE_TEMPERATURE', 'CTD_TEMPERATURE',
+   'FLOAT_TEMPERATURE', 'MOORING_TEMPERATURE',
+   'SATELLITE_SSH', 'XBT_TEMPERATURE']
 
-**2. Fallback brute-force search**
+   Input obs (SATELLITE_SSH): 3042
+   Looking up bathymetric depths ...
 
-- Used if the grid is not monotonic
-- Searches the entire grid
+   Summary (SATELLITE_SSH)
+     Kept:    2305  (depth > 200 m)
+     Removed: 737
+     Depth range kept: 205.0 – 5000.0 m
+     Error model: sigma = 0.04 + (0.08 - 0.04) * exp(-h / 500.0)
 
-Both methods ignore land points using the grid mask.
+     Other obs types kept unchanged: 571
+
+     Wrote: obs_seq.trim
+
 
 Time Handling
 -------------
@@ -97,14 +130,10 @@ Usage
 ::
 
    &cmems_ssh_to_obs_nml
-      file_list         = 'ssh_file_list.txt'
-      ocean_in          = 'roms_restart.nc'
-      file_out          = 'obs_seq.ssh'
-      avg_obs_per_file  = 500000
-      obs_error_min     = 0.04
-      obs_error_max     = 0.08
-      transition_depth  = 500.0
-      debug             = .true.
+      file_list    = 'ssh_file_list.txt'
+      file_out     = 'obs_seq.ssh'
+      obs_error_sd = 0.04
+      debug        = .true.
    /
 
 +----------------------+-----------------------+---------------------------+--------------------------------------------------------------+
@@ -113,31 +142,19 @@ Usage
 | ``file_list``        | character(len=256)    | ``''`` (empty string)     | Path to a text file containing a list of input CSV files,    |
 |                      |                       |                           | one filename per line.                                       |
 +----------------------+-----------------------+---------------------------+--------------------------------------------------------------+
-| ``ocean_in``         | character(len=256)    | ``'roms_restart.nc'``     | Path to ocean model file used to read bathymetry, grid       |
-|                      |                       |                           | coordinates, and land mask.                                  |
-+----------------------+-----------------------+---------------------------+--------------------------------------------------------------+
 | ``file_out``         | character(len=256)    | ``'obs_seq.ssh'``         | Name of the DART observation sequence output file. If the    |
 |                      |                       |                           | file already exists, it will be replaced.                    |
 +----------------------+-----------------------+---------------------------+--------------------------------------------------------------+
-| ``avg_obs_per_file`` | integer               | ``500000``                | Estimated average number of observations per input file.     |
-|                      |                       |                           | Used to pre-allocate sequence memory efficiently.            |
-+----------------------+-----------------------+---------------------------+--------------------------------------------------------------+
-| ``obs_error_min``    | real(r8)              | ``0.04``                  | Minimum observation error standard deviation (meters),       |
-|                      |                       |                           | typically applied in deep ocean regions.                     |
-+----------------------+-----------------------+---------------------------+--------------------------------------------------------------+
-| ``obs_error_max``    | real(r8)              | ``0.08``                  | Maximum observation error standard deviation (meters),       |
-|                      |                       |                           | typically applied in shallow/coastal regions.                |
-+----------------------+-----------------------+---------------------------+--------------------------------------------------------------+
-| ``transition_depth`` | real(r8)              | ``500.0``                 | Bathymetric transition depth (meters) controlling the        |
-|                      |                       |                           | exponential error scaling.                                   |
+| ``obs_error_sd``     | real(r8)              | ``0.04``                  | Uniform observation error standard deviation (meters)        |
+|                      |                       |                           | assigned to all SSH observations.                            |
 +----------------------+-----------------------+---------------------------+--------------------------------------------------------------+
 | ``debug``            | logical               | ``.true.``                | If true, prints diagnostic output including sample           |
 |                      |                       |                           | observations and processing information.                     |
 +----------------------+-----------------------+---------------------------+--------------------------------------------------------------+
 
-3. Run the converter: ``./cmems_ssh_to_obs``
+1. Run the converter: ``./cmems_ssh_to_obs``
 
-4. Output: The resulting observation sequence file is stored in ``obs_seq.ssh``
+2. Output: The resulting observation sequence file is stored in ``obs_seq.ssh``
 
 When ``debug`` is turned on, the progress of the converter can be monitored 
 which would look similar to the following:
