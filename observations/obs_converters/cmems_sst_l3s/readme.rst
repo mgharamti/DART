@@ -23,14 +23,15 @@ The converter extracts:
 - Observation time and location
 
 and writes them into a DART observation sequence file using the
-``SATELLITE_BLENDED_SST`` observation kind. 
+``SATELLITE_BLENDED_SST`` observation type. The unit of 
+temperature is C.  
 
 For more information about the SST product, visit the 
 Copernicus Marine Service: https://marine.copernicus.eu
 
 Input data
 ----------
-The converter expects netCDF files from the CMEMS SST L3S product, e.g, ``SST_GLO_PHY_L3S_*.nc``
+The converter expects netCDF files from the CMEMS SST L3S product, e.g., ``SST_GLO_PHY_L3S_*.nc``
 
 Required variables:
 
@@ -41,8 +42,7 @@ Required variables:
 - ``longitude``
 - ``time``
 
-Only observations with quality level greater than a specified threshold
-(default: > 3) are retained.
+Only observations with quality level greater than 3 are retained.
 
 Obs Error handling
 ------------------

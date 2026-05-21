@@ -9,7 +9,7 @@
   /
 
 &cmems_sst_to_obs_nml
-   file_list       = 'sst_obs_list.txt'
+   file_list       = 'sst_file_list.txt'
    file_out        = 'obs_seq.sst'
    debug           = .true.
   /
@@ -33,8 +33,8 @@
    filename_out      = ''
    print_only        = .false.
    gregorian_cal     = .true.
-   first_obs_days    = 150113
-   first_obs_seconds = 0
-   last_obs_days     = 150114
-   last_obs_seconds  = 86399
+   first_obs_days    = -1
+   first_obs_seconds = -1
+   last_obs_days     = -1
+   last_obs_seconds  = -1
    /
