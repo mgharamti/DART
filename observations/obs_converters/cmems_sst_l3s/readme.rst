@@ -1,3 +1,5 @@
+.. _cmems_sst_to_obs:
+
 CMEMS L3S SST observations
 ==========================
 
