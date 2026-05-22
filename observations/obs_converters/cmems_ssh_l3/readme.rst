@@ -1,3 +1,4 @@
+.. _cmems_ssh_to_obs:
 
 ===============================
 CMEMS SSH Along-Track Converter
