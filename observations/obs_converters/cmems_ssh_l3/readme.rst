@@ -22,7 +22,7 @@ The supported product is:
 The converter reads CSV files exported from CMEMS and extracts **filtered sea level
 anomaly (SLA)** observations for assimilation into ocean models such as ROMS.
 
-The resulting observations are assigned the DART kind: ``SATELLITE_SSH``. The 
+The resulting observations are assigned the DART type: ``SATELLITE_SSH``. The 
 observations in the sequence file are in units of meters. 
 
 Data Description
