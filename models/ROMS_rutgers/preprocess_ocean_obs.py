@@ -110,11 +110,11 @@ def main():
     obs_seq = obsq.ObsSequence(args.obs_in)
 
     print(f"Reading ROMS grid: {args.roms_file}")
-    roms = xr.open_dataset(args.roms_file)
-    bath = roms["h"].values
-    mask = roms["mask_rho"].values
-    glon = np.mod(roms["lon_rho"].values, 360.0)  # DART-style
-    glat = roms["lat_rho"].values
+    with xr.open_dataset(args.roms_file) as roms:    
+    	bath = roms["h"].values
+    	mask = roms["mask_rho"].values
+    	glon = np.mod(roms["lon_rho"].values, 360.0)  # DART-style
+    	glat = roms["lat_rho"].values
 
     # Which observation type(s) to process?
     df = obs_seq.df.copy()
