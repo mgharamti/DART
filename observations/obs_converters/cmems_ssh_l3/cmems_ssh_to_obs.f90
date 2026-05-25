@@ -35,8 +35,6 @@ use obs_utilities_mod,    only : create_3d_obs, add_obs_to_seq
 use obs_kind_mod,         only : SATELLITE_SSH
 use read_csv_mod,         only : csv_file_type, csv_get_nrows, csv_get_field,         &
                                  csv_open, csv_close, csv_print_header
-use netcdf_utilities_mod, only : nc_check, nc_open_file_readonly, nc_close_file,      &
-                                 nc_get_variable, nc_get_dimension_size
 
 implicit none
 
