@@ -130,10 +130,11 @@ Usage
 ::
 
    &cmems_ssh_to_obs_nml
-      file_list    = 'ssh_file_list.txt'
-      file_out     = 'obs_seq.ssh'
-      obs_error_sd = 0.04
-      debug        = .true.
+      file_list        = 'ssh_file_list.txt'
+      file_out         = 'obs_seq.ssh'
+      avg_obs_per_file = 500000    
+      obs_error_sd     = 0.04
+      debug            = .true.
    /
 
 +----------------------+-----------------------+---------------------------+--------------------------------------------------------------+
@@ -144,6 +145,9 @@ Usage
 +----------------------+-----------------------+---------------------------+--------------------------------------------------------------+
 | ``file_out``         | character(len=256)    | ``'obs_seq.ssh'``         | Name of the DART observation sequence output file. If the    |
 |                      |                       |                           | file already exists, it will be replaced.                    |
++----------------------+-----------------------+---------------------------+--------------------------------------------------------------+
+| ``avg_obs_per_file`` | integer               | ``500000``                | Estimated average number of observations per input file.     |   
+|                      |                       |                           | Used to pre-allocate sequence memory efficiently.            |  
 +----------------------+-----------------------+---------------------------+--------------------------------------------------------------+
 | ``obs_error_sd``     | real(r8)              | ``0.04``                  | Uniform observation error standard deviation (meters)        |
 |                      |                       |                           | assigned to all SSH observations.                            |

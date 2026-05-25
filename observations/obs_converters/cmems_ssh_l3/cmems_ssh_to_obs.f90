@@ -164,7 +164,7 @@ contains
 subroutine get_satellite_data(filename)
 
 character(len=*), intent(in) :: filename
-character(len=*), parameter  :: routine = 'get_sat_data'
+character(len=*), parameter  :: routine = 'get_satellite_data'
 
 integer :: k, i, nobs
 
@@ -246,7 +246,7 @@ type(obs_type),        intent(inout) :: obs, prev_obs
 type(time_type),       intent(inout) :: prev_time
 
 type(time_type) :: odat
-real(r8)        :: olon, olat, oval, oerr
+real(r8)        :: olon, olat, oval, oerr, obqc
 integer         :: iobs, osec, oday
 
 do iobs = 1, num_valid_obs
@@ -255,9 +255,10 @@ do iobs = 1, num_valid_obs
    odat = sat(iobs)%dat
    oval = sat(iobs)%obs
    oerr = sat(iobs)%err
+   obqc = sat(iobs)%oqc 
 
    call get_time(odat, osec, oday)
-   call create_3d_obs(olat, olon, 0.0_r8, VERTISSURFACE, oval, SATELLITE_SSH, oerr, oday, osec, 0.0_r8, obs)
+   call create_3d_obs(olat, olon, 0.0_r8, VERTISSURFACE, oval, SATELLITE_SSH, oerr, oday, osec, obqc, obs)
    call add_obs_to_seq(obs_seq, obs, odat, prev_obs, prev_time, first_obs)
 enddo
 
@@ -304,7 +305,7 @@ if (obs_num > 0) then
    call destroy_obs_sequence(obs_seq)
 else
    string1 = 'No obs were converted.'
-   call error_handler(E_ERR, source, string1)
+   call error_handler(E_MSG, source, string1)
 endif
 
 call error_handler(E_MSG, source, 'Finished successfully.')
