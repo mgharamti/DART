@@ -130,8 +130,8 @@ else
 endif
 
 call init_obs_sequence(obs_seq, num_copies, num_qc, num_new_obs)
-call set_copy_meta_data(obs_seq, num_copies, 'SSH observation')
-call set_qc_meta_data(obs_seq, num_qc, 'SSH QC')
+call set_copy_meta_data(obs_seq, num_copies, 'observation')
+call set_qc_meta_data(obs_seq, num_qc, 'QC')
 
 ! Loop over the obs files 
 do filenum = 1, nfiles
