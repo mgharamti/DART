@@ -21,6 +21,7 @@ Each directory has at least one converter:
 -  ``BATS``: :ref:`bats`
 -  ``CHAMP``: :ref:`champ`
 -  ``cice``: :ref:`cice_to_obs`
+-  ``cmems_sst_l3s``: :ref:`cmems_sst_to_obs`
 -  ``CNOFS``: See ``DART/observations/obs_converters/CNOFS``
 -  ``CONAGUA``: :ref:`conagua`
 -  ``COSMOS``: :ref:`cosmos`
