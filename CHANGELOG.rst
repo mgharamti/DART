@@ -22,6 +22,18 @@ individual files.
 
 The changes are now listed with the most recent at the top.
 
+**May 27 2026 :: Copernicus Observation Converters. Tag v11.24.0**
+
+New Features:
+
+  - Copernicus SSH L3 NRT Observation Converter
+  - Copernicus SST L3S Observation Converter
+ 
+Bug fix:
+
+  - DART version in observation converter logs
+
+
 **May 15 2026 :: CIRRUS GitHub actions. Tag v11.23.1**
 
 New Repo Infrastructure:
