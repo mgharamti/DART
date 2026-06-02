@@ -9,10 +9,13 @@
   /
 
 &svp_to_obs_nml
-   file_in         = ''
-   file_list       = 'obs_files.txt'
-   file_out        = 'obs_seq.svp'
-   debug           = .true.
+   file_in          = ''
+   file_list        = 'obs_files.txt'
+   file_out         = 'obs_seq.svp'
+   avg_obs_per_file = 500000
+   obs_error_vel    = 0.10 
+   obs_error_sst    = 0.20
+   debug            = .true.
   /
 
 &obs_sequence_nml
@@ -34,8 +37,8 @@
    filename_out      = ''
    print_only        = .false.
    gregorian_cal     = .true.
-   first_obs_days    = 150113
-   first_obs_seconds = 0
-   last_obs_days     = 150114
-   last_obs_seconds  = 86399
+   first_obs_days    = -1
+   first_obs_seconds = -1
+   last_obs_days     = -1
+   last_obs_seconds  = -1
   /
