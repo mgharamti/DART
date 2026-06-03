@@ -229,7 +229,7 @@ call to_upper(field_key)
 
 idx = -1
 
-do i = 1, cf%ncols
+do i = cf%ncols,1,-1
    field_name = adjustl(trim(cf%fields(i)))
    call to_upper(field_name)
    if (field_name == field_key) then
