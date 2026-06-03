@@ -9,10 +9,13 @@
   /
 
 &arvor_to_obs_nml
-   file_in         = ''
-   file_list       = 'obs_files.txt'
-   file_out        = 'obs_seq.arvor'
-   debug           = .true.
+   file_in          = ''
+   file_list        = 'obs_files.txt'
+   file_out         = 'obs_seq.arvor'
+   avg_obs_per_file = 500000  
+   obs_error_temp   = 0.02
+   obs_error_sal    = 0.02
+   debug            = .true.
   /
 
 &obs_sequence_nml
