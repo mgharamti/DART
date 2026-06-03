@@ -10,10 +10,13 @@
 
 
 &hf_to_obs_nml
-   file_in         = ''
-   file_list       = 'all_files.txt'
-   file_out        = 'obs_seq.hf'
-   debug           = .true.
+   file_in          = ''
+   file_list        = 'obs_files.txt'
+   file_out         = 'obs_seq.hf'
+   avg_obs_per_file = 500000 
+   radial_rmin_km   = -1.0
+   radial_rmax_km   = -1.0 
+   debug            = .true.
   /
 
 &obs_def_ocean_nml
