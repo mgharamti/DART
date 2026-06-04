@@ -10,10 +10,11 @@
 
 
 &cmems_ssh_to_obs_nml
-   file_list       = 'ssh_file_list.txt'
-   file_out        = 'obs_seq.ssh'
-   obs_error_sd    = 0.04
-   debug           = .true.
+   file_list        = 'obs_files.txt'
+   file_out         = 'obs_seq.ssh'
+   avg_obs_per_file = 500000
+   obs_error_sd     = 0.04
+   debug            = .true.
   /
 
 &obs_def_ocean_nml
