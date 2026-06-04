@@ -9,9 +9,10 @@
   /
 
 &cmems_sst_to_obs_nml
-   file_list       = 'sst_file_list.txt'
-   file_out        = 'obs_seq.sst'
-   debug           = .true.
+   file_list        = 'obs_files.txt'
+   file_out         = 'obs_seq.sst'
+   avg_obs_per_file = 500000
+   debug            = .true.
   /
 
 &utilities_nml
