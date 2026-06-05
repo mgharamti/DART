@@ -37,8 +37,10 @@
    /
 
 &obs_sequence_tool_nml
-   filename_seq      = ''
-   filename_out      = ''
+   filename_seq      = 'obs_seq.ssh_trim', '../../cmems_sst_l3s/work/obs_seq.sst', 
+                       '../../HFradar/work/obs_seq.hf', '../../ARVOR/work/obs_seq.arvor', 
+                       '../../SVP/work/obs_seq.svp'
+   filename_out      = '../../../../models/ROMS_rutgers/work/obs_seq_all.out'
    print_only        = .false.
    gregorian_cal     = .true.
    first_obs_days    = -1
