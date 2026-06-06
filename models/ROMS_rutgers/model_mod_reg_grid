@@ -691,7 +691,7 @@ character(len=*), parameter :: routine = 'get_grid_dimensions'
 integer :: ncid
 integer :: Nxi_rho, Nxi_u, Nxi_v
 integer :: Neta_rho, Neta_u, Neta_v
-integer :: Ns_rho, Ns_w
+integer :: Ns_rho
 
 ! Read the (static) grid dimensions from the ROMS grid file.
 ncid = nc_open_file_readonly(roms_filename, routine)
@@ -705,7 +705,6 @@ Neta_v   = nc_get_dimension_size(ncid, 'eta_v',   routine)
 
 ! Read the vertical dimensions 
 Ns_rho   = nc_get_dimension_size(ncid, 's_rho', routine)
-Ns_w     = nc_get_dimension_size(ncid, 's_w'  , routine)
 
 call nc_close_file(ncid, routine)
 
@@ -715,7 +714,6 @@ Nz = Ns_rho   ! Setting the nominal value of the 'global' variables
 
 Nu = Nxi_u
 Nv = Neta_v
-Nw = Ns_w
 
 end subroutine get_grid_dimensions
 
