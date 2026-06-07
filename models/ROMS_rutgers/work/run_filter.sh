@@ -21,7 +21,6 @@ rm -f $work_dir/dart_log.out           \
       $work_dir/roms_dart.*            \
       $work_dir/preassim_*.nc          \
       $work_dir/LargeInnov.txt         \
-      $work_dir/post_ens/roms_mem_out* \
       $work_dir/filter_done            \
       $work_dir/filter_failed  
 
