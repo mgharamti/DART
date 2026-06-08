@@ -1,0 +1,22 @@
+name: roms_dart_training
+channels:
+  - conda-forge
+dependencies:
+  - jupyterlab
+  - netcdf4
+  - cmocean
+  - scipy
+  - python=3.11
+  - dask
+  - matplotlib
+  - pyyaml
+  - numpy
+  - h5netcdf
+  - xarray
+  - cartopy
+  - tqdm
+  - ipykernel
+  - jupyter
+  - pip
+  - pip:
+      - pydartdiags
