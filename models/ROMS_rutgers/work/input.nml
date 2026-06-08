@@ -124,6 +124,16 @@
    output_files           = 'roms_mem_01.nc','roms_mem_02.nc','roms_mem_03.nc'
 /
 
+&closest_member_tool_nml
+   input_restart_files     = ''
+   input_restart_file_list = 'restart_list.txt'
+   output_file_name        = 'closest_mem.txt'
+   ens_size                = 80
+   single_restart_file_in  = .false.
+   difference_method       = 4
+   use_only_qtys           = ''
+  /
+
 &obs_def_ocean_nml
    max_radial_vel_obs = 10000000
    debug              = .false.
