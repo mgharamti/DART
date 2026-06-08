@@ -14,3 +14,4 @@ cd models/lorenz_63/work
 
 echo
 echo "DART compile test successful."
+echo
