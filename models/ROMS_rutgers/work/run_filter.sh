@@ -37,6 +37,7 @@ if [ $filter_status -eq 0 ]; then
    # Prepare observation space diagnostics
    cd $work_dir
    ./obs_diag
+   ./obs_seq_to_netcdf
 
    # Clean up the directory
    mv output_mean.nc     $output_dir
@@ -46,6 +47,7 @@ if [ $filter_status -eq 0 ]; then
    mv obs_seq.final      $output_dir
    mv increment.nc       $output_dir
    mv obs_diag_output.nc $output_dir
+   mv obs_epoch_*nc      $output_dir
 else 
    touch $work_dir/filter_failed
    echo  "Exit code: ${filter_status}" > $work_dir/filter_failed

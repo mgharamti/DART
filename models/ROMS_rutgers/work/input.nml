@@ -317,13 +317,13 @@
   /
 
 &obs_seq_to_netcdf_nml
-   obs_sequence_name = ''
-   obs_sequence_list = 'obs_seq_files.txt'
+   obs_sequence_name = 'obs_seq.final'
+   obs_sequence_list = ''
    append_to_netcdf  = .false.
-   lonlim1           =   0.0
-   lonlim2           = 360.0
-   latlim1           = -90.0
-   latlim2           =  90.0
+   lonlim1           =  90.0
+   lonlim2           = 145.0
+   latlim1           = -15.0
+   latlim2           =  15.0
    verbose           = .true.
   /
 
