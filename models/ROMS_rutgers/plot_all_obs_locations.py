@@ -82,28 +82,23 @@ ax.add_feature(cfeature.NaturalEarthFeature('physical', 'coastline', '10m'),
 ax.add_feature(cfeature.LAKES, facecolor='lightsteelblue', zorder=8)
 ax.add_feature(cfeature.BORDERS, linewidth=0.5, zorder=8)
 
-#ax.set_facecolor("aliceblue")
-#ax.add_feature(cfeature.LAND, facecolor="whitesmoke", zorder=2)
-#ax.add_feature(cfeature.COASTLINE, linewidth=0.7, zorder=8)
-#ax.add_feature(cfeature.BORDERS, linewidth=0.4, zorder=8)
-
 for group_name, obs_types in groups.items():
 
-    this = df[df["type"].isin(obs_types)]
+    this_ob = df[df["type"].isin(obs_types)]
 
-    if len(this) == 0:
+    if len(this_ob) == 0:
         continue
 
     # Avoid over-counting colocated variables in the visual label
-    unique_locations = this[["longitude", "latitude"]].drop_duplicates()
+    unique_locations = this_ob[["longitude", "latitude"]].drop_duplicates()
 
     ax.scatter(
-        this["longitude"],
-        this["latitude"],
+        this_ob["longitude"],
+        this_ob["latitude"],
         s=sizes[group_name],
         alpha=alphas[group_name],
         color=colors[group_name],
-        label=f"{group_name} (N={len(this):,})",
+        label=f"{group_name} (N={len(this_ob):,})",
         transform=proj,
         zorder=zorders[group_name],
         edgecolor="none",

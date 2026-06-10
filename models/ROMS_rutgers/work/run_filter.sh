@@ -10,6 +10,9 @@
 #PBS -l job_priority=premium
 
 work_dir=/glade/derecho/scratch/${USER}/inacawo/DART_training/models/ROMS_rutgers/work
+
+source $work_dir/../../../scripts/load_modules.sh
+
 output_dir=$work_dir/filter_output
 
 mkdir -p $output_dir
