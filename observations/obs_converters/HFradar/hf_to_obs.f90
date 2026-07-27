@@ -90,7 +90,7 @@ integer                 :: ix, iy, nx, ny
 
 logical                 :: from_list = .false., first_obs = .true.
 real(r8)                :: obs_qc, rmin_km, rmax_km 
-real(r8)                :: missing_u, missing_v
+real(r8)                :: missing_u, missing_v, missing_Vr
 
 ! Debugging counters
 integer :: totals_kept     = 0
@@ -258,7 +258,7 @@ FILELOOP: do
                  radials_kept = radials_kept + 1
               endif 
            elseif (hf_type == 'NEW') then 
-              if (rvel(ix, iy) == rvel(ix, iy)) then 
+              if (good_new_radial_obs(rvel(ix, iy))) then 
                  call fill_obs(obs, prev_obs, prev_time, obs_num, rlon_1D(ix), &
                       rlat_1D(iy), HFRADAR_RADIAL_VELOCITY, obs_time,          &
                       rstd(ix, iy), rvel(ix, iy), obs_qc, phi(ix, iy))
@@ -667,6 +667,8 @@ where(rlon_1D < 0.0_r8) rlon_1D = rlon_1D + 360.0_r8
 call nc_get_variable(ncid, 'hcdt',  phi, routine)
 call nc_get_variable(ncid, 'hcsp', rvel, routine)
 
+call nc_get_attribute_from_variable(ncid, 'hcsp', '_FillValue', missing_Vr, routine)
+
 ! Check the units of the angle from the instrument
 call nc_get_attribute_from_variable(ncid, 'hcdt', 'units', angle_unit)
 if (angle_unit(1:6) == 'degree') then
@@ -873,6 +875,22 @@ endif
 
 end function good_total_obs
 
+
+
+!------------------------------------------------------------
+! Figure out good new radial velocities
+logical function good_new_radial_obs(val)
+
+real(r8), intent(in) :: val
+
+good_new_radial_obs = .true.
+
+if (val /= val .or. val == missing_Vr) then
+   drop_nan_radial = drop_nan_radial + 1
+   good_new_radial_obs = .false.
+endif
+
+end function good_new_radial_obs
 
 !------------------------------------------------------------
 ! Figure out whether we can use this radial obs or not
