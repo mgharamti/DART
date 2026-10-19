@@ -33,10 +33,10 @@
    obs_sequence_out_name    = 'obs_seq.final'
    init_time_days           = -1
    init_time_seconds        = -1
-   first_obs_days           = -1
-   first_obs_seconds        = -1
-   last_obs_days            = -1
-   last_obs_seconds         = -1
+   first_obs_days = 155512
+   first_obs_seconds = 0
+   last_obs_days = 155512
+   last_obs_seconds = 86399
    obs_window_days          = 2
    obs_window_seconds       = 0
    num_output_obs_members   = 80
@@ -118,10 +118,10 @@
   /
 
 &perturb_single_instance_nml
-   ens_size               = 3
+   ens_size               = 80
    perturbation_amplitude = 0.1
-   input_files            = 'roms_template.nc'
-   output_files           = 'roms_mem_01.nc','roms_mem_02.nc','roms_mem_03.nc'
+   input_files            = 'spunup_hist_file/cawo_g2.8.1_his_20260827_00_00001.nc'
+   output_file_list       = 'init_roms_ens.txt'
 /
 
 &closest_member_tool_nml
@@ -174,10 +174,10 @@
 
    obs_seq_in_file_name       = "obs_seq.in"
    obs_seq_out_file_name      = "obs_seq.out"
-   first_obs_days             = -1
-   first_obs_seconds          = -1
-   last_obs_days              = -1
-   last_obs_seconds           = -1
+   first_obs_days = 155512
+   first_obs_seconds = 0
+   last_obs_days = 155512
+   last_obs_seconds = 86399
 
    trace_execution            = .false.
    output_timestamps          = .false.

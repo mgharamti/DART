@@ -14,6 +14,7 @@
    file_out         = 'obs_seq.ssh'
    avg_obs_per_file = 500000
    obs_error_sd     = 0.04
+   csv_info_exists  = .false.
    debug            = .true.
   /
 

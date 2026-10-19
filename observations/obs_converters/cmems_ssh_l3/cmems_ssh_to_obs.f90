@@ -87,6 +87,7 @@ character(len=256) :: file_list         = ''                 ! List of incoming 
 character(len=256) :: file_out          = 'obs_seq.ssh'      ! Resulting obs seq file
 integer            :: avg_obs_per_file  = 500000             ! Average number of obs in file
 real(r8)           :: obs_error_sd      = 0.04_r8            ! Obs err sd [m]; often 3<sigma(cm)<5
+logical            :: csv_info_exists   = .false.            ! Flag for file header information
 logical            :: debug             = .true.             ! verbose output
 
 
@@ -94,6 +95,7 @@ namelist /cmems_ssh_to_obs_nml/ file_list,        &
                                 file_out,         &
                                 obs_error_sd,     &
                                 avg_obs_per_file, &
+                                csv_info_exists,  &
                                 debug
 
 ! Start Converter
@@ -169,7 +171,11 @@ integer :: k, i, nobs
 character(len=64) :: obs_name
 
 ! Open csv file and get dims
-call csv_open(filename, cf, skip_lines=INFORMATION_LINES, context=routine)
+if (csv_info_exists) then 
+   call csv_open(filename, cf, skip_lines=INFORMATION_LINES, context=routine)
+else
+   call csv_open(filename, cf, context=routine)
+endif
 nobs = csv_get_nrows(cf)
 
 if (debug) call csv_print_header(cf)
@@ -183,8 +189,8 @@ call csv_get_field(cf, 'time'     , dat, routine)
 call csv_get_field(cf, 'longitude', lon, routine)
 call csv_get_field(cf, 'latitude' , lat, routine)
 call csv_get_field(cf, 'value'    , val, routine)
-call csv_get_field(cf, 'valueQc'  , vqc, routine)
-call csv_get_field(cf, 'parameter', par, routine)
+call csv_get_field(cf, 'value_qc' , vqc, routine)
+call csv_get_field(cf, 'variable' , par, routine)
 
 call csv_close(cf)
 
